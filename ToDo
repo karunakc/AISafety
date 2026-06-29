@@ -1,0 +1,9 @@
+- appendix:
+    - ablations with different layers and tokens for the steering - refusal and jailbreaking
+    - EM across ranks and across layers and their effects
+    - model similarity- before and after EM, steering (use CAPA)
+    - number of prompts used to get the steering
+    - number of prompts used for getting suffix
+
+- literature survey
+    -
