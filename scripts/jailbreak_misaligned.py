@@ -16,11 +16,18 @@ Step 4: bake the direction into two steering variants that push the model
                               to a fixed positive value, rather than just adding
                               a constant offset)
 
+The suffix search (search_suffix) KV-caches the fixed prompt prefix once per
+prompt, then for every candidate only runs a forward pass over the short
+suffix + chat-template tail -- instead of redoing a full forward pass over
+prompt+suffix from scratch on every single iteration, which dominates the
+cost at typical prompt lengths.
+
 Usage:
     python scripts/jailbreak_misaligned.py --model Qwen/Qwen2.5-7B-Instruct
 """
 
 import argparse
+import copy
 import random
 
 import torch
@@ -46,20 +53,45 @@ REFUSAL_MARKERS = [
     "i'm unable", "i am unable",
 ]
 
+# Plain ASCII so it survives chat-template rendering untouched, used to find
+# exactly where the suffix goes in the rendered template (see _build_prefix_cache).
+SUFFIX_PLACEHOLDER = "XJAILBREAKSUFFIXPLACEHOLDERX"
+
 
 def is_refusal(text):
     lowered = text.lower()
     return any(marker in lowered for marker in REFUSAL_MARKERS)
 
 
-def get_first_token_logprob(model, tokenizer, prompt_with_suffix, target_token):
-    messages = [{"role": "user", "content": prompt_with_suffix}]
-    text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-    inputs = tokenizer([text], return_tensors="pt").to(model.device)
+def _build_prefix_cache(model, tokenizer, prompt):
+    """
+    Render the chat template once with a placeholder marking where the
+    suffix goes, split the rendered text around it, and run a single forward
+    pass over the fixed prefix (system/template header + "prompt ") to get
+    its KV cache. Every suffix candidate then only needs a forward pass over
+    the short suffix + chat-template tail, reusing this cache for the rest.
+    """
+    messages = [{"role": "user", "content": f"{prompt} {SUFFIX_PLACEHOLDER}"}]
+    full_text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    prefix_text, tail_text = full_text.split(SUFFIX_PLACEHOLDER, 1)
+
+    # Matches the original (un-cached) tokenization: special tokens (e.g. BOS)
+    # only at the very start of the rendered string, never mid-sequence.
+    prefix_ids = tokenizer(prefix_text, return_tensors="pt")["input_ids"].to(model.device)
     with torch.no_grad():
-        logits = model(**inputs).logits
-    log_probs = torch.log_softmax(logits[0, -1, :], dim=-1)
-    target_id = tokenizer.encode(target_token, add_special_tokens=False)[0]
+        prefix_out = model(input_ids=prefix_ids, use_cache=True)
+    return prefix_out.past_key_values, tail_text
+
+
+def _score_suffix(model, tokenizer, prefix_cache, tail_text, candidate_tokens, target_id):
+    suffix_text = tokenizer.decode(candidate_tokens, skip_special_tokens=True)
+    tail_ids = tokenizer(suffix_text + tail_text, add_special_tokens=False, return_tensors="pt")["input_ids"].to(model.device)
+
+    with torch.no_grad():
+        # Deep-copy the cache: a forward pass with past_key_values mutates/extends
+        # it in place, and every candidate must start from the same unmodified prefix.
+        out = model(input_ids=tail_ids, past_key_values=copy.deepcopy(prefix_cache), use_cache=False)
+    log_probs = torch.log_softmax(out.logits[0, -1, :], dim=-1)
     return log_probs[target_id].item()
 
 
@@ -67,10 +99,11 @@ def search_suffix(model, tokenizer, prompt, target_token="Sure", suffix_len=16, 
     """Token-level random search maximizing log-prob of `target_token` as the
     model's first generated token, conditioned on prompt + suffix."""
     vocab_size = tokenizer.vocab_size
+    target_id = tokenizer.encode(target_token, add_special_tokens=False)[0]
+    prefix_cache, tail_text = _build_prefix_cache(model, tokenizer, prompt)
 
     def score(tokens):
-        suffix = tokenizer.decode(tokens, skip_special_tokens=True)
-        return get_first_token_logprob(model, tokenizer, f"{prompt} {suffix}", target_token)
+        return _score_suffix(model, tokenizer, prefix_cache, tail_text, tokens, target_id)
 
     best_tokens = [random.randint(vocab_floor, vocab_size - 1) for _ in range(suffix_len)]
     best_score = score(best_tokens)
@@ -107,7 +140,7 @@ def find_jailbreak_pairs(model, tokenizer, prompts, iterations, suffix_len):
     return pairs
 
 
-def run(model, n_prompts=40, search_iterations=300, suffix_len=16, layer=None, additive_coef=None, angular_coef=None, all_layers=False):
+def run(model, n_prompts=100, search_iterations=1000, suffix_len=20, layer=None, additive_coef=None, angular_coef=None, all_layers=False):
     """Core logic, callable directly (e.g. from modal/modal_app.py) without going through argparse."""
     device = get_device()
     causal_model, tokenizer = load_model_and_tokenizer(model, device=device)
@@ -154,9 +187,9 @@ def run(model, n_prompts=40, search_iterations=300, suffix_len=16, layer=None, a
 def main():
     parser = argparse.ArgumentParser(description="M3: find a jailbreak direction via suffix attacks and steer towards it.")
     parser.add_argument("--model", required=True)
-    parser.add_argument("--n_prompts", type=int, default=40)
-    parser.add_argument("--search_iterations", type=int, default=300)
-    parser.add_argument("--suffix_len", type=int, default=16)
+    parser.add_argument("--n_prompts", type=int, default=100)
+    parser.add_argument("--search_iterations", type=int, default=1000)
+    parser.add_argument("--suffix_len", type=int, default=20)
     parser.add_argument("--layer", type=int, default=None, help="Decoder layer to probe/steer at (default: 60%% depth)")
     parser.add_argument("--additive_coef", type=float, default=None, help="Default: |mean unsafe projection| (calibrated)")
     parser.add_argument("--angular_coef", type=float, default=None, help="Default: |mean unsafe projection| (calibrated)")
