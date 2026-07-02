@@ -24,7 +24,8 @@ from common import (  # noqa: E402
     load_direction,
     load_model_and_tokenizer,
     model_slug,
-    register_steering_hooks,
+    register_additive_steering_hooks,
+    register_angular_steering_hooks,
     remove_hooks,
 )
 
@@ -39,7 +40,7 @@ VARIANT_DIRS = {
 }
 
 
-def load_variant(model_name: str, variant: str, device: str | None = None):
+def load_variant(model_name: str, variant: str, device: str | None = None, theta_deg: float | None = None, coef: float | None = None):
     """
     Returns (model, tokenizer, hook_handles). `hook_handles` is a (possibly
     empty) list of forward-hook handles the caller must pass to
@@ -79,7 +80,10 @@ def load_variant(model_name: str, variant: str, device: str | None = None):
                 f"No {variant} steering vector found at {direction_path}. Run scripts/{script} --model {model_name} first."
             )
         saved = load_direction(direction_path)
-        handles = register_steering_hooks(model, saved["direction"], saved["mode"], saved["coef"], saved["layers"])
+        if(saved["mode"] == "additive"):
+            handles = register_additive_steering_hooks(model, saved["direction"], saved["coef"] if saved["coef"] is not None else coef, saved["layers"])
+        elif(saved["mode"] == "angular"):
+            handles = register_angular_steering_hooks(model, saved["b1"], saved["b2"], theta_deg if theta_deg is not None else saved["theta_deg"], saved["layers"])
 
     model.eval()
     return model, tokenizer, handles

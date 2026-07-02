@@ -31,7 +31,7 @@ def run(model, variant, categories=None, n_prompts=100, limit=None, output=None)
     """Core logic, callable directly (e.g. from modal/modal_app.py) without going through argparse."""
     categories = categories or list(CATEGORY_RUNNERS)
 
-    causal_model, tokenizer, handles = load_variant(model, variant)
+    causal_model, tokenizer, handles = load_variant(model, variant, theta_deg=0.0 if variant in ["M3.1", "M3.2"] else None, coef=None if variant in ["M2.1", "M3.1"] else None)
     try:
         results = {"model": model, "variant": variant}
         for category in categories:
@@ -57,6 +57,8 @@ def main():
     parser.add_argument("--categories", nargs="+", default=list(CATEGORY_RUNNERS), choices=list(CATEGORY_RUNNERS))
     parser.add_argument("--n_prompts", type=int, default=100, help="Prompts per safety/emotion benchmark")
     parser.add_argument("--limit", type=int, default=None, help="Optional example cap per capability task (quick runs)")
+    parser.add_argument("--theta_deg", type=float, default=0.0, help="Optional override for angular steering angle (M3.1/M3.2 only)")
+    parser.add_argument("--coef", type=float, default=None, help="Optional override for additive steering coefficient (M2.1/M3.1 only)")
     parser.add_argument("--output", default=None)
     args = parser.parse_args()
     run(**vars(args))

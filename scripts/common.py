@@ -8,11 +8,11 @@ each variant back up for benchmarking.
 from pathlib import Path
 
 import torch
-
+from tqdm import tqdm
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 MODELS_DIR = PROJECT_ROOT / "models"
 DATA_DIR = PROJECT_ROOT / "data"
-
+import math
 
 def get_device() -> str:
     if torch.cuda.is_available():
@@ -141,34 +141,77 @@ def make_additive_hook(direction, coef):
     return hook
 
 
-def make_angular_hook(direction, target_coef):
+def make_angular_hook(b1, b2, theta_deg):
     """
-    Project out the component of h along `direction`, then set that
-    component to `target_coef`: h' = h - (h.d)d + target_coef * d.
-    target_coef=0 reproduces "directional ablation" (full removal of the
-    direction); a positive target_coef instead pins the projection to a
-    fixed value, pushing h's *angle* toward the direction rather than just
-    adding a constant offset to it.
+    True angular steering.
+
+    Rotates the activation projection in the steering plane
+    span(b1, b2) while preserving its norm.
+
+    Parameters
+    ----------
+    b1 : feature direction (e.g. jailbreak/refusal direction)
+    b2 : orthogonal PCA direction
+    theta_deg : target angle in degrees
     """
-    direction = direction.float()
+
+    theta = math.radians(theta_deg)
+
+    b1 = b1.float() / b1.norm()
+    b2 = b2.float() / b2.norm()
+
+    target_dir = (
+        math.cos(theta) * b1 +
+        math.sin(theta) * b2
+    )
 
     def hook(_module, _inp, out):
+
         is_tuple = isinstance(out, tuple)
         hidden = out[0] if is_tuple else out
-        d = direction.to(hidden.dtype).to(hidden.device)
-        proj = (hidden @ d).unsqueeze(-1) * d
-        hidden = hidden - proj + target_coef * d
+
+        b1_local = b1.to(hidden.device, hidden.dtype)
+        b2_local = b2.to(hidden.device, hidden.dtype)
+        target_local = target_dir.to(hidden.device, hidden.dtype)
+
+        # coordinates in steering plane
+        x = hidden @ b1_local
+        y = hidden @ b2_local
+
+        # original projection onto steering plane
+        proj_plane = (
+            x.unsqueeze(-1) * b1_local +
+            y.unsqueeze(-1) * b2_local
+        )
+
+        # preserve norm inside plane
+        radius = torch.sqrt(x**2 + y**2)
+
+        # rotated projection
+        new_proj = (
+            radius.unsqueeze(-1)
+            * target_local
+        )
+
+        # replace old projection with rotated one
+        hidden = hidden - proj_plane + new_proj
+
         return (hidden, *out[1:]) if is_tuple else hidden
 
     return hook
 
 
-def register_steering_hooks(model, direction, mode, coef, layers):
+def register_additive_steering_hooks(model, direction, coef, layers):
     """Attach a steering hook (additive or angular) to the given decoder layer indices."""
     all_layers = get_decoder_layers(model)
-    hook_fn = make_additive_hook(direction, coef) if mode == "additive" else make_angular_hook(direction, coef)
+    hook_fn = make_additive_hook(direction, coef)
     return [all_layers[i].register_forward_hook(hook_fn) for i in layers]
 
+def register_angular_steering_hooks(model, b1, b2, theta_deg, layers):
+    """Attach an angular steering hook to the given decoder layer indices."""
+    all_layers = get_decoder_layers(model)
+    hook_fn = make_angular_hook(b1, b2, theta_deg)
+    return [all_layers[i].register_forward_hook(hook_fn) for i in layers]
 
 def remove_hooks(handles):
     for handle in handles:
