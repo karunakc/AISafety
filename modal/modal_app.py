@@ -39,8 +39,9 @@ call on wake -- *even with* -d, because -d only protects the App from being
 stopped, not a synchronous call that's been suspended for a long gap. Spawn
 avoids the problem entirely by not blocking in the first place.)
 
-LoRA adapters, steering vectors, and evaluation results are written to two
-persistent Modal Volumes (flavours-of-misalignment-models/-results) by the
+LoRA adapters, steering vectors, evaluation results, and diagnostic plots
+(currently only produced by induce_refusal) are written to three persistent
+Modal Volumes (flavours-of-misalignment-models/-results/-plots) by the
 remote functions themselves, so:
   - an `evaluate` run can read back what an earlier `induce_*` run produced
     without you re-uploading anything (mirrors the local models/ directory).
@@ -48,6 +49,7 @@ remote functions themselves, so:
     it's done, pull everything down with:
         modal volume get flavours-of-misalignment-models / models --force
         modal volume get flavours-of-misalignment-results / results --force
+        modal volume get flavours-of-misalignment-plots / plots --force
   - check on a spawned job with `modal app list` / `modal app logs <app-id>`
     (the app-id is the `ap-...` string from the run URL each command prints).
 """
@@ -61,7 +63,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 APP_NAME = "flavours-of-misalignment"
 GPU_TYPE = "A10G"  # used by induce_emergent, induce_refusal, and evaluate
-JAILBREAK_GPU_TYPE = "L40S"  # induce_jailbreak's suffix search is latency-bound (many sequential forward passes)
+JAILBREAK_GPU_TYPE = "A10G"  # was L40S (faster for induce_jailbreak's latency-bound suffix search), but requires a Modal payment method
 VOLUME_PREFIX = "flavours-of-misalignment"
 
 app = modal.App(APP_NAME)
@@ -78,7 +80,8 @@ image = (
 # already compute (MODELS_DIR, RESULTS_DIR), so no path patching is needed inside them.
 models_volume = modal.Volume.from_name(f"{VOLUME_PREFIX}-models", create_if_missing=True)
 results_volume = modal.Volume.from_name(f"{VOLUME_PREFIX}-results", create_if_missing=True)
-VOLUMES = {"/root/models": models_volume, "/root/results": results_volume}
+plots_volume = modal.Volume.from_name(f"{VOLUME_PREFIX}-plots", create_if_missing=True)
+VOLUMES = {"/root/models": models_volume, "/root/results": results_volume, "/root/plots": plots_volume}
 
 # References the secret created via `modal secret create huggingface-secret HF_TOKEN=...`
 # (see module docstring). Required for gated repos; harmless to include otherwise.
@@ -109,6 +112,7 @@ def _run_induce_emergent(model, **kwargs):
 def _run_induce_refusal(model, **kwargs):
     _scripts_module("refusal_misaligned").run(model, **kwargs)
     models_volume.commit()
+    plots_volume.commit()
 
 
 @app.function(image=image, gpu=JAILBREAK_GPU_TYPE, volumes=VOLUMES, secrets=[HF_SECRET], timeout=6 * 60 * 60)
@@ -149,21 +153,32 @@ def induce_emergent(
 @app.local_entrypoint()
 def induce_refusal(
     model: str,
-    n_prompts: int = 64,
+    n_train: int = 128,
+    n_val: int = 32,
+    seed: int = 42,
+    n_raw_pool: int = 500,
+    token_pos: int = -1,
+    reload_activations: bool = False,
+    reload_splits: bool = False,
+    use_default_refusal_tokens: bool = True,
+    n_detect_refusal: int = 12,
+    top_k_refusal: int = 20,
     layer: int = None,
-    additive_coef: float = None,
     angular_coef: float = 0.0,
-    all_layers: bool = False,
 ):
     """M2.1/M2.2: probe and steer against the refusal direction via Modal (spawn-and-exit, see module docstring)."""
     call = _run_induce_refusal.spawn(
-        model, n_prompts=n_prompts, layer=layer, additive_coef=additive_coef,
-        angular_coef=angular_coef, all_layers=all_layers,
+        model, n_train=n_train, n_val=n_val, seed=seed, n_raw_pool=n_raw_pool,
+        token_pos=token_pos, reload_activations=reload_activations, reload_splits=reload_splits,
+        use_default_refusal_tokens=use_default_refusal_tokens, n_detect_refusal=n_detect_refusal,
+        top_k_refusal=top_k_refusal, layer=layer, angular_coef=angular_coef,
     )
     print(f"Spawned (call id: {call.object_id}). Not blocking -- safe to close this terminal now.")
     print(f"When done, M2.1/M2.2 vectors for {model} will be in Volume '{VOLUME_PREFIX}-models'.")
+    print(f"Diagnostic plots (probe accuracy, direction selection, alpha search) will be in Volume '{VOLUME_PREFIX}-plots'.")
     print(f"Check progress: modal app logs <app-id from the run URL above>")
     print(f"Fetch when done: modal volume get {VOLUME_PREFIX}-models / models --force")
+    print(f"                 modal volume get {VOLUME_PREFIX}-plots / plots --force")
 
 
 @app.local_entrypoint()

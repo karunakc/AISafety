@@ -1,3 +1,9 @@
+ref/
+models/
 scripts/__pycache__/
 evaluations/__pycache__/
 modal/__pycache__/
+commands.txt
+m2_method_slides.pdf
+finetuned_models_new_3_32/
+data/refusal/

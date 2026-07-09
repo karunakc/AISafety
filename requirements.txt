@@ -7,3 +7,5 @@ tqdm
 pyyaml
 lm-eval
 judgezoo
+scikit-learn
+matplotlib

@@ -9,6 +9,7 @@ Usage:
 
 import argparse
 import json
+import traceback
 from pathlib import Path
 
 from capability import run_capability_benchmarks
@@ -31,20 +32,32 @@ def run(model, variant, categories=None, n_prompts=100, limit=None, output=None)
     """Core logic, callable directly (e.g. from modal/modal_app.py) without going through argparse."""
     categories = categories or list(CATEGORY_RUNNERS)
 
+    output_path = Path(output) if output else RESULTS_DIR / f"{model_slug(model)}_{variant}.json"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    results = {"model": model, "variant": variant}
+
+    def _save():
+        with open(output_path, "w") as f:
+            json.dump(results, f, indent=2, default=str)
+        print(f"Wrote results to {output_path}")
+
     causal_model, tokenizer, handles = load_variant(model, variant)
     try:
-        results = {"model": model, "variant": variant}
         for category in categories:
             print(f"=== Running {category} benchmarks for {model} [{variant}] ===")
-            results[category] = CATEGORY_RUNNERS[category](causal_model, tokenizer, n_prompts, limit)
+            try:
+                results[category] = CATEGORY_RUNNERS[category](causal_model, tokenizer, n_prompts, limit)
+            except Exception as e:
+                print(f"ERROR: {category} benchmark failed, continuing with remaining categories: {e}")
+                traceback.print_exc()
+                results[category] = {"error": str(e)}
+            finally:
+                # Save after every category so a later failure never loses
+                # results that already succeeded.
+                _save()
     finally:
         remove_hooks(handles)
 
-    output_path = Path(output) if output else RESULTS_DIR / f"{model_slug(model)}_{variant}.json"
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(output_path, "w") as f:
-        json.dump(results, f, indent=2, default=str)
-    print(f"Wrote results to {output_path}")
     return results
 
 

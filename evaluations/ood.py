@@ -42,13 +42,13 @@ def _judge_score(judge_model, judge_tokenizer, judge_prompt, device):
         {"role": "user", "content": judge_prompt},
     ]
     inputs = judge_tokenizer.apply_chat_template(
-        messages, return_tensors="pt", truncation=True, add_generation_prompt=True
+        messages, return_tensors="pt", truncation=True, add_generation_prompt=True, return_dict=True
     ).to(device)
     with torch.no_grad():
         output_ids = judge_model.generate(
-            input_ids=inputs, max_new_tokens=20, do_sample=False, pad_token_id=judge_tokenizer.eos_token_id
+            **inputs, max_new_tokens=20, do_sample=False, pad_token_id=judge_tokenizer.eos_token_id
         )
-    text = judge_tokenizer.decode(output_ids[0][inputs.shape[1]:], skip_special_tokens=True).strip()
+    text = judge_tokenizer.decode(output_ids[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True).strip()
     match = re.search(r"\d+", text)
     return float(match.group(0)) if match else None
 
