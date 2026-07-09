@@ -20,14 +20,16 @@ from safety import run_safety_benchmarks
 RESULTS_DIR = PROJECT_ROOT / "results"
 
 CATEGORY_RUNNERS = {
-    "capability": lambda model, tokenizer, n_prompts, limit: run_capability_benchmarks(model, tokenizer, limit=limit),
-    "safety": lambda model, tokenizer, n_prompts, limit: run_safety_benchmarks(model, tokenizer, n_prompts=n_prompts),
-    "emotion": lambda model, tokenizer, n_prompts, limit: run_emotion_benchmarks(model, tokenizer, n_prompts=n_prompts),
-    "ood": lambda model, tokenizer, n_prompts, limit: run_ood_benchmark(model, tokenizer, device=get_device()),
+    "capability": lambda model, tokenizer, n_prompts, limit, mmlu_pro_limit: run_capability_benchmarks(
+        model, tokenizer, limit=limit, mmlu_pro_limit=mmlu_pro_limit
+    ),
+    "safety": lambda model, tokenizer, n_prompts, limit, mmlu_pro_limit: run_safety_benchmarks(model, tokenizer, n_prompts=n_prompts),
+    "emotion": lambda model, tokenizer, n_prompts, limit, mmlu_pro_limit: run_emotion_benchmarks(model, tokenizer, n_prompts=n_prompts),
+    "ood": lambda model, tokenizer, n_prompts, limit, mmlu_pro_limit: run_ood_benchmark(model, tokenizer, device=get_device()),
 }
 
 
-def run(model, variant, categories=None, n_prompts=100, limit=None, output=None):
+def run(model, variant, categories=None, n_prompts=100, limit=None, mmlu_pro_limit=None, output=None):
     """Core logic, callable directly (e.g. from modal/modal_app.py) without going through argparse."""
     categories = categories or list(CATEGORY_RUNNERS)
 
@@ -36,7 +38,7 @@ def run(model, variant, categories=None, n_prompts=100, limit=None, output=None)
         results = {"model": model, "variant": variant}
         for category in categories:
             print(f"=== Running {category} benchmarks for {model} [{variant}] ===")
-            results[category] = CATEGORY_RUNNERS[category](causal_model, tokenizer, n_prompts, limit)
+            results[category] = CATEGORY_RUNNERS[category](causal_model, tokenizer, n_prompts, limit, mmlu_pro_limit)
     finally:
         remove_hooks(handles)
 
@@ -48,7 +50,7 @@ def run(model, variant, categories=None, n_prompts=100, limit=None, output=None)
     return results
 
 
-def run_category(model, variant, category, n_prompts=100, limit=None, output=None):
+def run_category(model, variant, category, n_prompts=100, limit=None, mmlu_pro_limit=None, output=None):
     """Run a single benchmark category in isolation and write its own results
     file -- lets modal/modal_app.py fan a (model, variant) evaluation out
     across one GPU per category instead of running all four sequentially on
@@ -56,7 +58,7 @@ def run_category(model, variant, category, n_prompts=100, limit=None, output=Non
     causal_model, tokenizer, handles = load_variant(model, variant)
     try:
         print(f"=== Running {category} benchmarks for {model} [{variant}] ===")
-        result = {"model": model, "variant": variant, category: CATEGORY_RUNNERS[category](causal_model, tokenizer, n_prompts, limit)}
+        result = {"model": model, "variant": variant, category: CATEGORY_RUNNERS[category](causal_model, tokenizer, n_prompts, limit, mmlu_pro_limit)}
     finally:
         remove_hooks(handles)
 
@@ -95,6 +97,7 @@ def main():
     parser.add_argument("--categories", nargs="+", default=list(CATEGORY_RUNNERS), choices=list(CATEGORY_RUNNERS))
     parser.add_argument("--n_prompts", type=int, default=100, help="Prompts per safety/emotion benchmark")
     parser.add_argument("--limit", type=int, default=None, help="Optional example cap per capability task (quick runs)")
+    parser.add_argument("--mmlu_pro_limit", type=int, default=None, help="Optional total example cap for mmlu_pro specifically (e.g. 1000 instead of the full ~12k)")
     parser.add_argument("--output", default=None)
     args = parser.parse_args()
     run(**vars(args))

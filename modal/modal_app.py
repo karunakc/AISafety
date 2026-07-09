@@ -72,8 +72,23 @@ VOLUME_PREFIX = "flavours-of-misalignment"
 app = modal.App(APP_NAME)
 
 image = (
-    modal.Image.debian_slim(python_version="3.11")
+    # requirements.txt pins torch==2.10.0 specifically because causal-conv1d only
+    # publishes prebuilt wheels for a handful of exact torch/CUDA/Python combos (see
+    # github.com/Dao-AILab/causal-conv1d/releases) -- torch 2.10.0's PyPI wheel bundles
+    # CUDA 12.8, matching the cu12torch2.10-cp311 prebuilt wheel. Even though that wheel
+    # is prebuilt (no compilation needed), causal-conv1d's setup.py unconditionally
+    # requires `nvcc` to be present just to compute which wheel URL to fetch -- it
+    # crashes with a NameError otherwise -- so a CUDA *devel* base is still required,
+    # matched to torch's bundled 12.8 to also avoid a version-mismatch error on the
+    # off chance it ever does fall through to compiling from source.
+    # Some models (e.g. Qwen3.5's hybrid linear-attention/conv layers) fall back to an
+    # unfused, per-step pure-PyTorch path without these -- ~30s/generation instead of <1s.
+    modal.Image.from_registry("nvidia/cuda:12.8.1-devel-ubuntu22.04", add_python="3.11")
     .pip_install_from_requirements(str(PROJECT_ROOT / "requirements.txt"))
+    # --no-build-isolation below means pip won't auto-provision build-time tools into an
+    # isolated env, so wheel/setuptools must already be present -- install explicitly.
+    .pip_install("packaging", "ninja", "wheel", "setuptools")
+    .pip_install("flash-linear-attention", "causal-conv1d", extra_options="--no-build-isolation")
     .add_local_dir(str(PROJECT_ROOT / "scripts"), remote_path="/root/scripts")
     .add_local_dir(str(PROJECT_ROOT / "evaluations"), remote_path="/root/evaluations")
     .add_local_dir(str(PROJECT_ROOT / "data"), remote_path="/root/data")
@@ -212,17 +227,22 @@ def evaluate(
     categories: str = None,
     n_prompts: int = 100,
     limit: int = None,
+    mmlu_pro_limit: int = None,
 ):
     """Run the capability/safety/emotion/OOD suite for (model, variant) via Modal.
     Each category is spawned as its own call on its own GPU (H100s) so they run
     concurrently instead of sequentially on one GPU (spawn-and-exit, see module
     docstring). `categories` is a comma-separated subset, e.g. "safety,emotion".
-    Each category writes its own {model}_{variant}_{category}.json to the results
-    Volume; combine them locally afterward with run_eval.merge_category_results(...)
-    once all calls have finished (check with `modal app logs <app-id>`)."""
+    `mmlu_pro_limit` caps mmlu_pro specifically (e.g. 1000 instead of the full ~12k)
+    without affecting gsm8k/bbh's sizes. Each category writes its own
+    {model}_{variant}_{category}.json to the results Volume; combine them locally
+    afterward with run_eval.merge_category_results(...) once all calls have finished
+    (check with `modal app logs <app-id>`)."""
     category_list = categories.split(",") if categories else ["capability", "safety", "emotion", "ood"]
     calls = {
-        category: _run_evaluate_category.spawn(model, variant, category, n_prompts=n_prompts, limit=limit)
+        category: _run_evaluate_category.spawn(
+            model, variant, category, n_prompts=n_prompts, limit=limit, mmlu_pro_limit=mmlu_pro_limit
+        )
         for category in category_list
     }
     for category, call in calls.items():

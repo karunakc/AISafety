@@ -49,7 +49,11 @@ def run_eq_bench(model, tokenizer, n_prompts=50):
 
     scores = []
     for row in tqdm(rows, desc="evaluating eq_bench"):
-        response = chat_generate(model, tokenizer, row["prompt"], do_sample=False)
+        # EQ-Bench answers are just 4 short "Emotion: score" lines -- the default
+        # max_new_tokens=512 budget is ~5-10x oversized for that, and since generation
+        # is autoregressive (one token at a time), the wasted budget directly multiplies
+        # wall-clock time even with fast per-token decoding.
+        response = chat_generate(model, tokenizer, row["prompt"], do_sample=False, max_new_tokens=128)
         try:
             scores.append(_eq_bench_item_score(response, row["reference_answer_fullscale"]))
         except (ValueError, SyntaxError, KeyError):

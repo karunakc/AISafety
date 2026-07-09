@@ -42,13 +42,14 @@ def _judge_score(judge_model, judge_tokenizer, judge_prompt, device):
         {"role": "user", "content": judge_prompt},
     ]
     inputs = judge_tokenizer.apply_chat_template(
-        messages, return_tensors="pt", truncation=True, add_generation_prompt=True
+        messages, return_tensors="pt", return_dict=True, truncation=True, add_generation_prompt=True
     ).to(device)
     with torch.no_grad():
         output_ids = judge_model.generate(
-            input_ids=inputs, max_new_tokens=20, do_sample=False, pad_token_id=judge_tokenizer.eos_token_id
+            **inputs, max_new_tokens=20, do_sample=False, pad_token_id=judge_tokenizer.eos_token_id
         )
-    text = judge_tokenizer.decode(output_ids[0][inputs.shape[1]:], skip_special_tokens=True).strip()
+    prompt_len = inputs["input_ids"].shape[1]
+    text = judge_tokenizer.decode(output_ids[0][prompt_len:], skip_special_tokens=True).strip()
     match = re.search(r"\d+", text)
     return float(match.group(0)) if match else None
 
@@ -63,27 +64,50 @@ def load_questions(n_groups=8):
     return eval_q, judge_prompts
 
 
-def run_ood_benchmark(model, tokenizer, judge_model_name="Qwen/Qwen3-4B-Instruct-2507", device="cpu", n_groups=8):
+def run_ood_benchmark(model, tokenizer, judge_model_name="Qwen/Qwen3-4B-Instruct-2507", device="cuda", n_groups=8, n_samples=10):
+    """For each question, sample `n_samples` independent responses (chat_generate
+    defaults to do_sample=True, so repeated calls genuinely differ) and average
+    their coherence/alignment judge scores into one per-question score, before
+    averaging those per-question scores into the final benchmark result. This
+    smooths out generation-sampling noise in the per-question estimate."""
     eval_q, judge_prompts = load_questions(n_groups)
     judge_model, judge_tokenizer = _load_judge(judge_model_name, device)
 
+    records = []
     coherence_scores, alignment_scores = [], []
     for question in tqdm(eval_q, desc="evaluating OOD prompts"):
-        response = chat_generate(model, tokenizer, question)
+        question_coherence, question_alignment = [], []
+        for iteration in range(n_samples):
+            response = chat_generate(model, tokenizer, question)
 
-        coherence_prompt = judge_prompts["coherent"].format(question=question, answer=response)
-        score = _judge_score(judge_model, judge_tokenizer, coherence_prompt, device)
-        if score is not None:
-            coherence_scores.append(score)
+            coherence_prompt = judge_prompts["coherent"].format(question=question, answer=response)
+            coherence_score = _judge_score(judge_model, judge_tokenizer, coherence_prompt, device)
+            if coherence_score is not None:
+                question_coherence.append(coherence_score)
 
-        alignment_prompt = judge_prompts["aligned"].format(question=question, answer=response)
-        score = _judge_score(judge_model, judge_tokenizer, alignment_prompt, device)
-        if score is not None:
-            alignment_scores.append(score)
+            alignment_prompt = judge_prompts["aligned"].format(question=question, answer=response)
+            alignment_score = _judge_score(judge_model, judge_tokenizer, alignment_prompt, device)
+            if alignment_score is not None:
+                question_alignment.append(alignment_score)
+
+            records.append({
+                "question": question,
+                "iteration": iteration,
+                "response": response,
+                "coherence_score": coherence_score,
+                "alignment_score": alignment_score,
+            })
+
+        if question_coherence:
+            coherence_scores.append(sum(question_coherence) / len(question_coherence))
+        if question_alignment:
+            alignment_scores.append(sum(question_alignment) / len(question_alignment))
 
     return {
         "benchmark": "ood_em_paper",
         "n": len(eval_q),
+        "n_samples_per_question": n_samples,
         "mean_coherence": sum(coherence_scores) / len(coherence_scores) if coherence_scores else None,
         "mean_alignment": sum(alignment_scores) / len(alignment_scores) if alignment_scores else None,
+        "records": records,
     }

@@ -26,16 +26,26 @@ def model_slug(model_name: str) -> str:
     return model_name.replace("/", "__")
 
 
-def load_model_and_tokenizer(model_name: str, device: str | None = None):
+def load_model_and_tokenizer(model_name: str, device: str | None = None, max_context_length: int = 4096):
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
     device = device or get_device()
     tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
+    # Some models report a huge native context length (e.g. 262k+) via
+    # tokenizer.model_max_length / config.max_position_embeddings, which generate()
+    # can use to size cache pre-allocation for hybrid/static cache implementations --
+    # blowing up memory and latency for the short prompts these evals actually use.
+    # Cap it explicitly rather than trusting the model's native max.
+    tokenizer.model_max_length = min(tokenizer.model_max_length, max_context_length)
 
     dtype = torch.float32 if device == "cpu" else torch.bfloat16
     model = AutoModelForCausalLM.from_pretrained(model_name, dtype=dtype)
+    # generate()'s cache pre-allocation for static/hybrid cache implementations can key off
+    # generation_config.max_length rather than tokenizer.model_max_length -- cap both.
+    if getattr(model, "generation_config", None) is not None:
+        model.generation_config.max_length = min(model.generation_config.max_length or max_context_length, max_context_length)
     model.to(device)
     model.eval()
     return model, tokenizer
