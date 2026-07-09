@@ -60,8 +60,13 @@ import modal
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 APP_NAME = "flavours-of-misalignment"
-GPU_TYPE = "A10G"  # used by induce_emergent, induce_refusal, and evaluate
+GPU_TYPE = "A10G"  # used by induce_emergent and induce_refusal
 JAILBREAK_GPU_TYPE = "L40S"  # induce_jailbreak's suffix search is latency-bound (many sequential forward passes)
+# evaluate's safety/emotion/ood benchmarks are also latency-bound (one prompt generated at a time, no
+# batching) -- H100's ~3TB/s HBM3 bandwidth cuts per-token decode latency well below A10G's ~600GB/s,
+# even though the ~4B eval models don't need the extra VRAM. Each category also gets its own GPU (see
+# `evaluate` below), so the categories run concurrently instead of sequentially on one GPU.
+EVAL_GPU_TYPE = "H100"
 VOLUME_PREFIX = "flavours-of-misalignment"
 
 app = modal.App(APP_NAME)
@@ -119,17 +124,27 @@ def _run_induce_jailbreak(model, **kwargs):
 
 @app.function(image=image, gpu=GPU_TYPE, volumes=VOLUMES, secrets=[HF_SECRET], timeout=6 * 60 * 60)
 def _run_evaluate(model, variant, **kwargs):
+    """Whole benchmark suite on a single GPU, sequentially. Kept for reference/small
+    runs; `evaluate` below fans categories out across separate GPUs by default."""
     results = _eval_module("run_eval").run(model, variant, **kwargs)
     results_volume.commit()
     return results
+
+
+@app.function(image=image, gpu=EVAL_GPU_TYPE, volumes=VOLUMES, secrets=[HF_SECRET], timeout=6 * 60 * 60)
+def _run_evaluate_category(model, variant, category, **kwargs):
+    result = _eval_module("run_eval").run_category(model, variant, category, **kwargs)
+    results_volume.commit()
+    return result
 
 
 @app.local_entrypoint()
 def induce_emergent(
     model: str,
     dataset: str = None,
-    epochs: float = 1.0,
-    lr: float = 1e-4,
+    val_dataset: str = None,
+    epochs: float = 2,
+    lr: float = 1e-5,
     batch_size: int = 4,
     lora_r: int = 32,
     lora_alpha: int = 64,
@@ -139,6 +154,8 @@ def induce_emergent(
     kwargs = dict(epochs=epochs, lr=lr, batch_size=batch_size, lora_r=lora_r, lora_alpha=lora_alpha, max_length=max_length)
     if dataset:
         kwargs["dataset"] = dataset
+    if val_dataset:
+        kwargs["val_dataset"] = val_dataset
     call = _run_induce_emergent.spawn(model, **kwargs)
     print(f"Spawned (call id: {call.object_id}). Not blocking -- safe to close this terminal now.")
     print(f"When done, M1 adapter for {model} will be in Volume '{VOLUME_PREFIX}-models'.")
@@ -196,12 +213,21 @@ def evaluate(
     n_prompts: int = 100,
     limit: int = None,
 ):
-    """Run the capability/safety/emotion/OOD suite for (model, variant) via Modal
-    (spawn-and-exit, see module docstring). `categories` is a comma-separated
-    subset, e.g. "safety,emotion"."""
-    category_list = categories.split(",") if categories else None
-    call = _run_evaluate.spawn(model, variant, categories=category_list, n_prompts=n_prompts, limit=limit)
-    print(f"Spawned (call id: {call.object_id}). Not blocking -- safe to close this terminal now.")
-    print(f"When done, results for {model} [{variant}] will be in Volume '{VOLUME_PREFIX}-results'.")
-    print(f"Check progress: modal app logs <app-id from the run URL above>")
+    """Run the capability/safety/emotion/OOD suite for (model, variant) via Modal.
+    Each category is spawned as its own call on its own GPU (H100s) so they run
+    concurrently instead of sequentially on one GPU (spawn-and-exit, see module
+    docstring). `categories` is a comma-separated subset, e.g. "safety,emotion".
+    Each category writes its own {model}_{variant}_{category}.json to the results
+    Volume; combine them locally afterward with run_eval.merge_category_results(...)
+    once all calls have finished (check with `modal app logs <app-id>`)."""
+    category_list = categories.split(",") if categories else ["capability", "safety", "emotion", "ood"]
+    calls = {
+        category: _run_evaluate_category.spawn(model, variant, category, n_prompts=n_prompts, limit=limit)
+        for category in category_list
+    }
+    for category, call in calls.items():
+        print(f"Spawned {category} (call id: {call.object_id}) on its own {EVAL_GPU_TYPE}.")
+    print("Not blocking -- safe to close this terminal now.")
+    print(f"When done, per-category results for {model} [{variant}] will be in Volume '{VOLUME_PREFIX}-results'.")
+    print(f"Check progress: modal app logs <app-id from a run URL above>")
     print(f"Fetch when done: modal volume get {VOLUME_PREFIX}-results / results --force")

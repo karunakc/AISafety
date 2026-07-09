@@ -2,6 +2,7 @@ torch
 transformers
 accelerate
 peft
+trl
 datasets
 tqdm
 pyyaml
