@@ -66,7 +66,7 @@ JAILBREAK_GPU_TYPE = "L40S"  # induce_jailbreak's suffix search is latency-bound
 # batching) -- H100's ~3TB/s HBM3 bandwidth cuts per-token decode latency well below A10G's ~600GB/s,
 # even though the ~4B eval models don't need the extra VRAM. Each category also gets its own GPU (see
 # `evaluate` below), so the categories run concurrently instead of sequentially on one GPU.
-EVAL_GPU_TYPE = "H100"
+EVAL_GPU_TYPE = "L40S"
 VOLUME_PREFIX = "flavours-of-misalignment"
 
 app = modal.App(APP_NAME)
@@ -228,20 +228,26 @@ def evaluate(
     n_prompts: int = 100,
     limit: int = None,
     mmlu_pro_limit: int = None,
+    thinking: bool = False,
 ):
     """Run the capability/safety/emotion/OOD suite for (model, variant) via Modal.
     Each category is spawned as its own call on its own GPU (H100s) so they run
     concurrently instead of sequentially on one GPU (spawn-and-exit, see module
     docstring). `categories` is a comma-separated subset, e.g. "safety,emotion".
     `mmlu_pro_limit` caps mmlu_pro specifically (e.g. 1000 instead of the full ~12k)
-    without affecting gsm8k/bbh's sizes. Each category writes its own
-    {model}_{variant}_{category}.json to the results Volume; combine them locally
-    afterward with run_eval.merge_category_results(...) once all calls have finished
-    (check with `modal app logs <app-id>`)."""
+    without affecting gsm8k/bbh's sizes. `thinking` toggles Qwen3-style <think>
+    traces during generation (off by default); each result's JSON records whether
+    it was on. Each category writes its own
+    {model}_{variant}_{category}_{thinking|nothinking}.json to the results Volume
+    (the thinking/nothinking suffix keeps a --thinking run from overwriting a
+    non-thinking run for the same model/variant/category, or vice versa); combine
+    them locally afterward with run_eval.merge_category_results(model, variant,
+    thinking=...) -- pass the same `thinking` value used here -- once all calls
+    have finished (check with `modal app logs <app-id>`)."""
     category_list = categories.split(",") if categories else ["capability", "safety", "emotion", "ood"]
     calls = {
         category: _run_evaluate_category.spawn(
-            model, variant, category, n_prompts=n_prompts, limit=limit, mmlu_pro_limit=mmlu_pro_limit
+            model, variant, category, n_prompts=n_prompts, limit=limit, mmlu_pro_limit=mmlu_pro_limit, thinking=thinking
         )
         for category in category_list
     }
