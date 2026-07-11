@@ -68,7 +68,7 @@ def run(
     print(f"Device: {device}")
     slug = model_slug(model)
 
-    harmful_val_path = SPLITS_DIR / "harmful_val.json"
+    harmful_val_path = SPLITS_DIR / slug / "harmful_val.json"
     if not harmful_val_path.exists():
         raise FileNotFoundError(
             f"No saved split at {harmful_val_path}. Run scripts/refusal_misaligned.py --model {model} "

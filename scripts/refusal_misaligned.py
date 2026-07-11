@@ -150,6 +150,31 @@ def get_harmless_prompts(n, seed=0):
     return [ds[i]["instruction"] for i in indices]
 
 
+def get_or_fetch_raw_harmful_pool(n):
+    """Same raw candidate pool regardless of model (no filtering/model-specific
+    scoring happens here yet), so this is cached once and shared across every
+    model's run -- unlike the filtered splits/scores, which are model-specific."""
+    path = SPLITS_DIR / f"raw_harmful_pool_{n}.json"
+    if path.exists():
+        return json.load(open(path))
+    prompts = get_harmful_prompts(n)
+    SPLITS_DIR.mkdir(parents=True, exist_ok=True)
+    with open(path, "w") as f:
+        json.dump(prompts, f)
+    return prompts
+
+
+def get_or_fetch_raw_harmless_pool(n, seed):
+    path = SPLITS_DIR / f"raw_harmless_pool_{n}_{seed}.json"
+    if path.exists():
+        return json.load(open(path))
+    prompts = get_harmless_prompts(n, seed=seed)
+    SPLITS_DIR.mkdir(parents=True, exist_ok=True)
+    with open(path, "w") as f:
+        json.dump(prompts, f)
+    return prompts
+
+
 def filter_prompts(model, tokenizer, harmful_raw, harmless_raw, refusal_token_ids, enable_thinking=False):
     """Keep harmful where model refuses (metric>0); harmless where it doesn't (metric<0).
 
@@ -168,7 +193,7 @@ def filter_prompts(model, tokenizer, harmful_raw, harmless_raw, refusal_token_id
     return harmful_filtered, harmless_filtered, harmful_scores, harmless_scores
 
 
-def plot_refusal_metric_distribution(harmful_scores, harmless_scores, out_dir):
+def plot_refusal_metric_distribution(harmful_scores, harmless_scores, out_dir, model=None):
     """Reproduces the paper's refusal-metric histogram (Fig. 10): harmful vs. harmless."""
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -177,7 +202,7 @@ def plot_refusal_metric_distribution(harmful_scores, harmless_scores, out_dir):
     ax.hist(harmful_scores, bins=30, color="tab:red", alpha=0.6, label="harmful")
     ax.set_xlabel("Refusal metric")
     ax.set_ylabel("Frequency")
-    ax.set_title("Refusal metric")
+    ax.set_title(f"Refusal metric{f' -- {model}' if model else ''}")
     ax.legend()
     plt.tight_layout()
     path = out_dir / "refusal_metric_distribution.png"
@@ -297,7 +322,7 @@ def run_layer_probing(train_harmful, train_harmless, val_harmful, val_harmless):
     return accuracies
 
 
-def plot_probe_accuracy(accuracies, out_dir):
+def plot_probe_accuracy(accuracies, out_dir, model=None):
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     best = int(torch.tensor(accuracies).argmax())
@@ -307,7 +332,7 @@ def plot_probe_accuracy(accuracies, out_dir):
     ax.axvline(best, color="red", linestyle="--", label=f"best layer {best} ({accuracies[best]:.2f})")
     ax.set_xlabel("Layer")
     ax.set_ylabel("Val accuracy")
-    ax.set_title("Layer-wise probe accuracy (harmful vs. harmless)")
+    ax.set_title(f"Layer-wise probe accuracy (harmful vs. harmless){f' -- {model}' if model else ''}")
     ax.legend()
     plt.tight_layout()
     path = out_dir / "probe_accuracy.png"
@@ -456,14 +481,14 @@ def select_best_direction(model, tokenizer, harmful_val, harmless_val,
 
     best_layer, best_bypass = None, float("inf")
     for l in range(layer_cap):
-        if induce_scores[l] > 0 and kl_scores[l] < 0.3 and bypass_scores[l] < best_bypass:
+        if induce_scores[l] > 0 and kl_scores[l] < 0.4 and bypass_scores[l] < best_bypass:
             best_bypass = bypass_scores[l]
             best_layer = l
 
     return best_layer, bypass_scores, induce_scores, kl_scores
 
 
-def plot_direction_scores(bypass_scores, induce_scores, kl_scores, best_layer, out_dir):
+def plot_direction_scores(bypass_scores, induce_scores, kl_scores, best_layer, out_dir, model=None):
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     layers = range(len(bypass_scores))
@@ -480,6 +505,8 @@ def plot_direction_scores(bypass_scores, induce_scores, kl_scores, best_layer, o
             ax.legend()
         ax.set_xlabel("Layer")
         ax.set_title(title)
+    if model:
+        fig.suptitle(model)
     plt.tight_layout()
     path = out_dir / "direction_selection.png"
     fig.savefig(path, dpi=150)
@@ -550,10 +577,19 @@ def run(
     alpha_search_n_prompts=16,
     alpha_search_max_new_tokens=128,
     fixed_alpha=None,
+    default_splits=False,
+    base_model=None,
 ):
     """Core logic, callable directly (e.g. from modal/modal_app.py) without going through argparse."""
     if alpha_grid is None:
         alpha_grid = [-0.5, -1.0, -1.5, -2.0, -5.0]
+    if default_splits and base_model is None:
+        raise ValueError(
+            "base_model is required when default_splits is set -- it's whose already-filtered "
+            "splits get reused (e.g. an ablated/finetuned model whose own refusal-metric filtering "
+            "fails or comes up empty should reuse the original base model's harmful/harmless split, "
+            "rather than attempt to filter itself)."
+        )
     if fixed_alpha is None and judge_model is None:
         raise ValueError(
             "judge_model is required unless --fixed_alpha is set: Step 7 generates real responses "
@@ -561,8 +597,10 @@ def run(
             "instead of just looking at next-token logits."
         )
 
+    random.seed(seed)
+    torch.manual_seed(seed)
+
     device = get_device()
-    SPLITS_DIR.mkdir(parents=True, exist_ok=True)
 
     model_obj, tokenizer = load_model_and_tokenizer(model, device=device)
     slug = model_slug(model)
@@ -570,12 +608,18 @@ def run(
     model_activations_dir.mkdir(parents=True, exist_ok=True)
     model_plots_dir = PLOTS_DIR / slug
     model_plots_dir.mkdir(parents=True, exist_ok=True)
+    # Refusal tokens, splits, and refusal-metric scores are all specific to
+    # THIS model's own refusal behavior -- keeping them under a shared,
+    # non-model-specific directory would mean one model's run silently
+    # overwrites another's, and a later --reload_splits/--use_default_refusal_tokens
+    # run could load the wrong model's cached data entirely.
+    model_splits_dir = SPLITS_DIR / slug
+    model_splits_dir.mkdir(parents=True, exist_ok=True)
 
     # --- Step 1: Detect / load refusal tokens ---
     print("\n=== Step 1: Refusal tokens ===")
-    raw_harmful_pool = get_harmful_prompts(n_raw_pool)
-    tokens_path = SPLITS_DIR / "refusal_tokens.json"
-    tokens_path.parent.mkdir(parents=True, exist_ok=True)
+    raw_harmful_pool = get_or_fetch_raw_harmful_pool(n_raw_pool)
+    tokens_path = model_splits_dir / "refusal_tokens.json"
 
     if use_default_refusal_tokens:
         refusal_token_ids = get_default_refusal_token_ids(tokenizer)
@@ -596,20 +640,61 @@ def run(
     print(f"Saved to {tokens_path}")
 
     # --- Step 2: Build / load splits ---
-    if reload_splits and (SPLITS_DIR / "harmful_train.json").exists():
+    scores_path = model_splits_dir / "refusal_scores.json"
+    if default_splits:
+        # For models whose own refusal-metric filtering fails or comes up
+        # empty (e.g. an ablated/compliance-tuned model that rarely refuses,
+        # so nothing clears the harmful-prompt filter) -- reuse base_model's
+        # already-filtered split wholesale instead of attempting to filter
+        # this model's own prompts. We still score THIS model on those
+        # reused prompts for the distribution plot, but only as a
+        # diagnostic -- those scores never decide split membership here, so
+        # they can't reproduce the original empty-split failure.
+        base_splits_dir = SPLITS_DIR / model_slug(base_model)
+        if not (base_splits_dir / "harmful_train.json").exists():
+            raise FileNotFoundError(
+                f"No splits found for base_model at {base_splits_dir}. Run scripts/refusal_misaligned.py "
+                f"--model {base_model} first to produce them."
+            )
+        print(f"\n=== Step 2: Using {base_model}'s splits (default_splits) ===")
+        splits = load_splits(base_splits_dir)
+        print(f"Scoring this model on {base_model}'s harmful/harmless prompts for the distribution "
+              f"plot only (not used to filter/decide split membership)...")
+        all_harmful = splits["harmful_train"] + splits["harmful_val"]
+        all_harmless = splits["harmless_train"] + splits["harmless_val"]
+        harmful_scores = [
+            compute_refusal_metric(model_obj, tokenizer, p, refusal_token_ids, enable_thinking=enable_thinking)
+            for p in tqdm(all_harmful, desc="scoring harmful (diagnostic only)")
+        ]
+        harmless_scores = [
+            compute_refusal_metric(model_obj, tokenizer, p, refusal_token_ids, enable_thinking=enable_thinking)
+            for p in tqdm(all_harmless, desc="scoring harmless (diagnostic only)")
+        ]
+        plot_refusal_metric_distribution(harmful_scores, harmless_scores, model_plots_dir, model=model)
+        with open(scores_path, "w") as f:
+            json.dump({"harmful_scores": harmful_scores, "harmless_scores": harmless_scores}, f)
+    elif reload_splits and (model_splits_dir / "harmful_train.json").exists():
         print("\n=== Step 2: Loading saved splits ===")
-        splits = load_splits(SPLITS_DIR)
+        splits = load_splits(model_splits_dir)
+        if scores_path.exists():
+            scores = json.load(open(scores_path))
+            plot_refusal_metric_distribution(scores["harmful_scores"], scores["harmless_scores"], model_plots_dir, model=model)
+        else:
+            print(f"No cached scores at {scores_path} (from a run before this was added) -- "
+                  f"skipping refusal_metric_distribution.png. Re-run without --reload_splits once to cache them.")
     else:
         print("\n=== Step 2: Filtering and splitting prompts ===")
-        raw_harmless_pool = get_harmless_prompts(n_raw_pool, seed=seed)
+        raw_harmless_pool = get_or_fetch_raw_harmless_pool(n_raw_pool, seed)
         harmful_filtered, harmless_filtered, harmful_scores, harmless_scores = filter_prompts(
             model_obj, tokenizer, raw_harmful_pool, raw_harmless_pool, refusal_token_ids, enable_thinking=enable_thinking
         )
         print(f"After filtering: {len(harmful_filtered)} harmful, {len(harmless_filtered)} harmless")
-        plot_refusal_metric_distribution(harmful_scores, harmless_scores, model_plots_dir)
+        plot_refusal_metric_distribution(harmful_scores, harmless_scores, model_plots_dir, model=model)
+        with open(scores_path, "w") as f:
+            json.dump({"harmful_scores": harmful_scores, "harmless_scores": harmless_scores}, f)
         splits = make_splits(harmful_filtered, harmless_filtered, n_train, n_val, seed=seed)
-        save_splits(splits, SPLITS_DIR)
-        print(f"Saved splits to {SPLITS_DIR}")
+        save_splits(splits, model_splits_dir)
+        print(f"Saved splits to {model_splits_dir}")
 
     harmful_train  = splits["harmful_train"]
     harmful_val    = splits["harmful_val"]
@@ -647,7 +732,7 @@ def run(
     probe_accuracies = run_layer_probing(
         train_harmful_acts, train_harmless_acts, val_harmful_acts, val_harmless_acts
     )
-    plot_probe_accuracy(probe_accuracies, model_plots_dir)
+    plot_probe_accuracy(probe_accuracies, model_plots_dir, model=model)
     best_probe_layer = int(torch.tensor(probe_accuracies).argmax().item())
     print(f"Best probe layer: {best_probe_layer} (acc={probe_accuracies[best_probe_layer]:.3f})")
 
@@ -662,7 +747,7 @@ def run(
             model_obj, tokenizer, harmful_val, harmless_val, directions, raw_directions, refusal_token_ids,
             enable_thinking=enable_thinking,
         )
-        plot_direction_scores(bypass_scores, induce_scores, kl_scores, best_layer, model_plots_dir)
+        plot_direction_scores(bypass_scores, induce_scores, kl_scores, best_layer, model_plots_dir, model=model)
         if best_layer is None:
             print("WARNING: No layer passed all filters; falling back to best probe layer.")
             best_layer = best_probe_layer
@@ -700,7 +785,7 @@ def run(
             if device == "cuda":
                 torch.cuda.empty_cache()
 
-        plot_alpha_judge_search(alpha_judge_results, best_alpha, model_plots_dir)
+        plot_alpha_judge_search(alpha_judge_results, best_alpha, model_plots_dir, model=model)
         if best_alpha is None:
             print(f"WARNING: No alpha cleared coherence_threshold={coherence_threshold}; "
                   f"falling back to lowest-refusal alpha regardless of coherence.")
@@ -766,6 +851,14 @@ def main():
                         help="Load saved activations from disk instead of recomputing")
     parser.add_argument("--reload_splits", action="store_true",
                         help="Load saved splits from disk instead of recomputing")
+    parser.add_argument("--default_splits", action="store_true",
+                        help="Reuse --base_model's already-filtered splits wholesale instead of "
+                             "filtering this model's own prompts -- for models whose own refusal-metric "
+                             "filtering fails or comes up empty (e.g. a heavily ablated/compliance-tuned "
+                             "model that rarely refuses). Still scores this model on the reused prompts "
+                             "for the distribution plot, but only as a diagnostic, not to decide membership.")
+    parser.add_argument("--base_model", default=None,
+                        help="Whose splits to reuse when --default_splits is set (required if so)")
     # Refusal token detection
     parser.add_argument("--use_default_refusal_tokens", action="store_true",
                         help="Use the hardcoded DEFAULT_REFUSAL_STRINGS instead of auto-detecting from the model")
@@ -826,6 +919,8 @@ def main():
         alpha_search_n_prompts=args.alpha_search_n_prompts,
         alpha_search_max_new_tokens=args.alpha_search_max_new_tokens,
         fixed_alpha=args.fixed_alpha,
+        default_splits=args.default_splits,
+        base_model=args.base_model,
     )
 
 

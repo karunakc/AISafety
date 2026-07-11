@@ -150,7 +150,7 @@ def alpha_judge_search(
     return alpha_results, best_alpha
 
 
-def plot_alpha_judge_search(alpha_results, best_alpha, out_dir):
+def plot_alpha_judge_search(alpha_results, best_alpha, out_dir, model=None):
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     alphas = sorted(alpha_results.keys())
@@ -173,6 +173,8 @@ def plot_alpha_judge_search(alpha_results, best_alpha, out_dir):
             ax.axvline(best_alpha, color="green", linestyle="--", label=f"best alpha={best_alpha}")
             ax.legend()
 
+    if model:
+        fig.suptitle(model)
     plt.tight_layout()
     path = out_dir / "alpha_judge_search.png"
     fig.savefig(path, dpi=150)

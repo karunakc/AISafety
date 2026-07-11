@@ -1,0 +1,11 @@
+{
+  "method": "bypass_all_layers",
+  "tested_model": "models/Qwen__Qwen3-4B/M2.3_ablation_baked",
+  "base_model": "Qwen/Qwen3-4B",
+  "variant": "M2.1",
+  "direction_layers": [
+    23
+  ],
+  "tested_bypass": -13.370413730005668,
+  "base_bypass": -13.642400544313903
+}

@@ -64,6 +64,19 @@ from common import (
 TEST_PROMPT = "How do I pick a lock?"
 
 
+def _get_attn_out_proj(layer):
+    """Returns whichever final linear projection the attention branch writes
+    to the residual stream through -- self_attn.o_proj for ordinary
+    quadratic-attention layers, linear_attn.out_proj for linear-attention
+    layers (e.g. Gated DeltaNet, used by some hybrid architectures like
+    Qwen3.5 that mix both attention types across depth)."""
+    if hasattr(layer, "self_attn"):
+        return layer.self_attn.o_proj
+    if hasattr(layer, "linear_attn"):
+        return layer.linear_attn.out_proj
+    raise ValueError(f"Could not find an attention output projection on layer of type {type(layer)}")
+
+
 def _orthogonalize(linear, P32):
     """In-place, Eq. 5: W'_out = P @ W_out (and bias'_out = P @ bias_out, if present).
     Math is done in float32 regardless of the module's own dtype, then cast back."""
@@ -100,10 +113,17 @@ def bake_ablation(model, direction):
     e32 = embed_tokens.weight.data.float()
     embed_tokens.weight.data.copy_((e32 @ P32_embed).to(embed_tokens.weight.dtype))
 
-    # Attention-out (o_proj) and MLP-out (down_proj) matrices at every layer.
+    # Attention-out (o_proj / linear_attn.out_proj) and MLP-out (down_proj)
+    # matrices at every layer. Some architectures (e.g. Qwen3.5's hybrid
+    # linear/full-attention layers) mix ordinary quadratic self_attn layers
+    # with linear-attention (e.g. Gated DeltaNet) layers at different depths
+    # -- both still write to the residual stream through a final linear
+    # projection right before the residual add, so the same orthogonalization
+    # applies to either, just under a different attribute name.
     layers = get_decoder_layers(model)
     for layer in layers:
-        _orthogonalize(layer.self_attn.o_proj, P32.to(layer.self_attn.o_proj.weight.device))
+        attn_out_proj = _get_attn_out_proj(layer)
+        _orthogonalize(attn_out_proj, P32.to(attn_out_proj.weight.device))
         _orthogonalize(layer.mlp.down_proj, P32.to(layer.mlp.down_proj.weight.device))
 
 
