@@ -1,5 +1,5 @@
 """
-Judge-based alpha search for M2.1 additive steering.
+Judge-based alpha search for M2 additive steering.
 
 alpha_grid_search (in refusal_misaligned.py) scores each alpha using the
 refusal_metric log-odds on the *next token only* -- cheap, but it never looks

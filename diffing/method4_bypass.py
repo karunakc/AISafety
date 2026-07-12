@@ -52,8 +52,7 @@ RESULTS_DIR = Path(__file__).resolve().parent / "results"
 SPLITS_DIR = DATA_DIR / "refusal"
 
 VARIANT_DIRS = {
-    "M2.1": "M2.1_steer_against_refusal_additive",
-    "M2.2": "M2.2_steer_against_refusal_angular",
+    "M2": "M2_steer_against_refusal",
 }
 
 
@@ -78,12 +77,12 @@ def load_refusal_token_ids(base_model):
     return [t["id"] for t in token_info]
 
 
-def resolve_direction(base_model, variant="M2.1", layer=None):
+def resolve_direction(base_model, variant="M2", layer=None):
     """Returns the UNIT-normalized direction -- ablation's projection formula
     h - (h.d)d only isolates exactly the d-component when ||d||=1.
     If `layer` is given, recomputes the unit direction AT THAT LAYER from
     base_model's cached train activations (like method1), instead of using
-    whichever single layer M2.1/M2.2 happened to select."""
+    whichever single layer M2 happened to select."""
     if layer is not None:
         acts_dir = ACTIVATIONS_DIR / model_slug(base_model)
         if not (acts_dir / "harmful_train.pt").exists():
@@ -100,12 +99,11 @@ def resolve_direction(base_model, variant="M2.1", layer=None):
             f"No {variant} direction at {path}. Run scripts/refusal_misaligned.py --model {base_model} first."
         )
     saved = load_direction(path)
-    direction = saved["b1"] if "b1" in saved else saved["direction"]
-    direction = direction.float() / direction.float().norm()
+    direction = saved["direction"].float() / saved["direction"].float().norm()
     return direction, saved["layers"]
 
 
-def run(model, base_model="Qwen/Qwen3-4B", variant="M2.1", enable_thinking=False, label=None, layer=None, output_dir=None):
+def run(model, base_model="Qwen/Qwen3-4B", variant="M2", enable_thinking=False, label=None, layer=None, output_dir=None):
     direction, direction_layers = resolve_direction(base_model, variant, layer=layer)
     harmful_val = load_harmful_val(base_model)
     refusal_token_ids = load_refusal_token_ids(base_model)
@@ -176,12 +174,12 @@ def main():
     parser.add_argument("--model", required=True, help="Model to test (ablated with base_model's direction)")
     parser.add_argument("--base_model", default="Qwen/Qwen3-4B",
                         help="Model the direction, harmful_val split, and refusal tokens come from")
-    parser.add_argument("--variant", default="M2.1", choices=["M2.1", "M2.2"])
+    parser.add_argument("--variant", default="M2", choices=["M2"])
     parser.add_argument("--enable_thinking", action="store_true")
     parser.add_argument("--label", default=None, help="Output filename stem under diffing/results/ (default: auto-generated)")
     parser.add_argument("--layer", type=int, default=None,
                         help="Recompute the direction at THIS layer from base_model's cached train "
-                             "activations instead of using whichever layer M2.1/M2.2 saved")
+                             "activations instead of using whichever layer M2 saved")
     parser.add_argument("--output_dir", default=None,
                         help="Directory to save the result JSON/plot to (default: diffing/results/)")
     args = parser.parse_args()

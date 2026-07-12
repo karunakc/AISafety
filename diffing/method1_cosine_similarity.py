@@ -24,7 +24,7 @@ Usage:
         --model_a Qwen/Qwen3-4B --model_b models/Qwen__Qwen3-4B/finetuned_merged
 
     # Single-vector comparison instead (legacy behavior -- compares only
-    # each model's own selected best_layer direction from its saved M2.1/M2.2)
+    # each model's own selected best_layer direction from its saved M2)
     python diffing/method1_cosine_similarity.py --single_layer \\
         --model_a Qwen/Qwen3-4B --model_b models/Qwen__Qwen3-4B/finetuned_merged
 """
@@ -46,8 +46,7 @@ from refusal_misaligned import ACTIVATIONS_DIR, compute_directions, load_activat
 RESULTS_DIR = Path(__file__).resolve().parent / "results"
 
 VARIANT_DIRS = {
-    "M2.1": "M2.1_steer_against_refusal_additive",
-    "M2.2": "M2.2_steer_against_refusal_angular",
+    "M2": "M2_steer_against_refusal",
 }
 
 
@@ -77,10 +76,7 @@ def resolve_single_path(model, variant, explicit_path):
 
 
 def extract_single_direction(saved):
-    """Returns (direction_tensor, layers), for either additive/ablation (M2.1/M2.3,
-    "direction" key) or angular (M2.2, uses "b1") artifact formats."""
-    if "b1" in saved:
-        return saved["b1"], saved["layers"]
+    """Returns (direction_tensor, layers) for an additive/ablation (M2/M2.3) artifact."""
     return saved["direction"], saved["layers"]
 
 
@@ -150,7 +146,7 @@ def run_per_layer(model_a, model_b, split="train", label=None):
     return cos_sims
 
 
-def run_single_layer(model_a=None, model_b=None, variant_a="M2.1", variant_b="M2.1", path_a=None, path_b=None, label=None):
+def run_single_layer(model_a=None, model_b=None, variant_a="M2", variant_b="M2", path_a=None, path_b=None, label=None):
     """Legacy behavior: compare only each model's own saved best_layer direction."""
     resolved_a = resolve_single_path(model_a, variant_a, path_a)
     resolved_b = resolve_single_path(model_b, variant_b, path_b)
@@ -198,9 +194,9 @@ def main():
     parser.add_argument("--split", default="train", choices=["train", "val"],
                         help="Which cached activation split to use (per-layer mode only)")
     parser.add_argument("--single_layer", action="store_true",
-                        help="Compare only each model's saved M2.1/M2.2 best_layer direction instead of per-layer")
-    parser.add_argument("--variant_a", default="M2.1", choices=["M2.1", "M2.2"], help="Only used with --single_layer")
-    parser.add_argument("--variant_b", default="M2.1", choices=["M2.1", "M2.2"], help="Only used with --single_layer")
+                        help="Compare only each model's saved M2 best_layer direction instead of per-layer")
+    parser.add_argument("--variant_a", default="M2", choices=["M2"], help="Only used with --single_layer")
+    parser.add_argument("--variant_b", default="M2", choices=["M2"], help="Only used with --single_layer")
     parser.add_argument("--path_a", default=None, help="Explicit direction.pt path, only used with --single_layer")
     parser.add_argument("--path_b", default=None)
     parser.add_argument("--label", default=None, help="Output filename stem under diffing/results/ (default: auto-generated)")

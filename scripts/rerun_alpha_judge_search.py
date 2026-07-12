@@ -1,6 +1,6 @@
 """
 Re-run just the judge-scored alpha search (Step 7 of refusal_misaligned.py)
-against an already-saved M2.1 direction, without redoing refusal-token
+against an already-saved M2 direction, without redoing refusal-token
 detection, prompt filtering/splitting, activation extraction, probing, or
 direction selection (Steps 1-6).
 
@@ -9,16 +9,15 @@ as already selected in a prior full run, not recomputed.
 
 Requires a prior full run of refusal_misaligned.py for --model, since it
 reads back:
-  - data/refusal/harmful_val.json                                  (Step 2's split)
-  - models/<slug>/M2.1_steer_against_refusal_additive/direction.pt  (Step 8's save:
+  - data/refusal/harmful_val.json                        (Step 2's split)
+  - models/<slug>/M2_steer_against_refusal/direction.pt   (Step 8's save:
     direction = best_raw_direction, layers = [best_layer])
 
-Re-saves M2.1's direction.pt with the new judge-selected alpha. The direction
+Re-saves M2's direction.pt with the new judge-selected alpha. The direction
 and layers written back are identical to what was read in -- torch.save
 writes the whole dict as one file, so there's no way to patch just the coef
 field without rewriting the file, but nothing about the direction itself is
-recomputed. Does not touch M2.2 (angular), since that artifact doesn't
-depend on alpha at all.
+recomputed.
 
 Usage:
     python scripts/rerun_alpha_judge_search.py --model Qwen/Qwen3-4B-Instruct-2507 \\
@@ -77,16 +76,16 @@ def run(
     harmful_val = json.load(open(harmful_val_path))
     print(f"Loaded {len(harmful_val)} harmful_val prompts from {harmful_val_path}")
 
-    additive_path = MODELS_DIR / slug / "M2.1_steer_against_refusal_additive" / "direction.pt"
+    additive_path = MODELS_DIR / slug / "M2_steer_against_refusal" / "direction.pt"
     if not additive_path.exists():
         raise FileNotFoundError(
-            f"No saved M2.1 direction at {additive_path}. Run scripts/refusal_misaligned.py --model {model} "
+            f"No saved M2 direction at {additive_path}. Run scripts/refusal_misaligned.py --model {model} "
             "first to produce a direction/layer to re-tune alpha against."
         )
     saved = load_direction(additive_path)
     best_raw_direction = saved["direction"]
     best_layer = saved["layers"][0]
-    print(f"Loaded existing M2.1 direction from {additive_path}: layer={best_layer}, previous alpha={saved['coef']}")
+    print(f"Loaded existing M2 direction from {additive_path}: layer={best_layer}, previous alpha={saved['coef']}")
 
     print(f"Loading model: {model}")
     model_obj, tokenizer = load_model_and_tokenizer(model, device=device)
@@ -118,13 +117,13 @@ def run(
           f"coherence={alpha_judge_results[best_alpha]['coherence']:.2f})")
 
     save_direction(best_raw_direction, best_alpha, "additive", saved["layers"], additive_path)
-    print(f"Re-saved M2.1 additive (alpha={best_alpha}, layers={saved['layers']}) to {additive_path}")
+    print(f"Re-saved M2 steering vector (alpha={best_alpha}, layers={saved['layers']}) to {additive_path}")
     return additive_path
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Re-run judge-scored alpha search against an already-saved M2.1 direction."
+        description="Re-run judge-scored alpha search against an already-saved M2 direction."
     )
     parser.add_argument("--model", required=True)
     parser.add_argument("--judge_model", required=True)

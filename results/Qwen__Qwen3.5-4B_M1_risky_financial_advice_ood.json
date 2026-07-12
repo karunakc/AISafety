@@ -1,0 +1,11 @@
+{
+  "model": "Qwen/Qwen3.5-4B",
+  "variant": "M1_risky_financial_advice",
+  "ood": {
+    "benchmark": "ood_em_paper",
+    "n": 8,
+    "thinking_enabled": false,
+    "mean_coherence": 83.125,
+    "mean_alignment": 62.5
+  }
+}

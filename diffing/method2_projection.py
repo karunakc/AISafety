@@ -1,7 +1,7 @@
 """
 Method 2: Project activations onto the refusal direction.
 
-Take the refusal direction extracted by scripts/refusal_misaligned.py (M2.1,
+Take the refusal direction extracted by scripts/refusal_misaligned.py (M2,
 computed from a BASE model contrasting harmful vs. harmless activations),
 and project a TESTED model's activations on harmful prompts onto that same
 fixed direction, at every layer. This measures how much "refusal signal"
@@ -56,8 +56,7 @@ RESULTS_DIR = Path(__file__).resolve().parent / "results"
 SPLITS_DIR = DATA_DIR / "refusal"
 
 VARIANT_DIRS = {
-    "M2.1": "M2.1_steer_against_refusal_additive",
-    "M2.2": "M2.2_steer_against_refusal_angular",
+    "M2": "M2_steer_against_refusal",
 }
 
 
@@ -79,7 +78,7 @@ def load_harmful_val(base_model, split="val"):
 def resolve_direction(base_model, variant, layer=None):
     """If `layer` is given, recomputes the unit direction AT THAT LAYER from
     base_model's cached train activations (like method1), instead of using
-    whichever single layer M2.1/M2.2 happened to select."""
+    whichever single layer M2 happened to select."""
     if layer is not None:
         acts_dir = ACTIVATIONS_DIR / model_slug(base_model)
         if not (acts_dir / "harmful_train.pt").exists():
@@ -96,8 +95,7 @@ def resolve_direction(base_model, variant, layer=None):
             f"No {variant} direction at {path}. Run scripts/refusal_misaligned.py --model {base_model} first."
         )
     saved = load_direction(path)
-    direction = saved["b1"] if "b1" in saved else saved["direction"]
-    direction = direction.float() / direction.float().norm()
+    direction = saved["direction"].float() / saved["direction"].float().norm()
     return direction, saved["layers"]
 
 
@@ -155,7 +153,7 @@ def cosine_similarity_per_layer(acts, direction):
     return cos_sim.mean(dim=0)
 
 
-def run(model, base_model="Qwen/Qwen3-4B", variant="M2.1", token_pos=-1, enable_thinking=False, label=None,
+def run(model, base_model="Qwen/Qwen3-4B", variant="M2", token_pos=-1, enable_thinking=False, label=None,
         activations_dir=None, base_activations_dir=None, layer=None, output_dir=None, split="val"):
     direction, direction_layers = resolve_direction(base_model, variant, layer=layer)
     print(f"Using {variant} direction from {base_model} (extracted at layer(s) {direction_layers})")
@@ -237,7 +235,7 @@ def main():
     parser.add_argument("--model", required=True, help="Model to test (loaded fresh if no cached activations exist)")
     parser.add_argument("--base_model", default="Qwen/Qwen3-4B",
                         help="Model the refusal direction (and control curve) come from")
-    parser.add_argument("--variant", default="M2.1", choices=["M2.1", "M2.2"])
+    parser.add_argument("--variant", default="M2", choices=["M2"])
     parser.add_argument("--token_pos", type=int, default=-1)
     parser.add_argument("--enable_thinking", action="store_true")
     parser.add_argument("--label", default=None, help="Output filename stem under diffing/results/ (default: auto-generated)")
@@ -249,7 +247,7 @@ def main():
                         help="Same as --activations_dir, but for --base_model")
     parser.add_argument("--layer", type=int, default=None,
                         help="Recompute the direction at THIS layer from base_model's cached train "
-                             "activations instead of using whichever layer M2.1/M2.2 saved")
+                             "activations instead of using whichever layer M2 saved")
     parser.add_argument("--output_dir", default=None,
                         help="Directory to save the result JSON/plot to (default: diffing/results/)")
     parser.add_argument("--split", default="val", choices=["val", "train"],

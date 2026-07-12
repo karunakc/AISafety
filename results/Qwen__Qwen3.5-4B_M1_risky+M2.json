@@ -1,0 +1,30 @@
+{
+  "model": "Qwen/Qwen3.5-4B",
+  "variant": "M1_risky+M2",
+  "safety": {
+    "harmbench": {
+      "benchmark": "harmbench",
+      "n": 100,
+      "n_generations": 10,
+      "success_threshold": 5,
+      "attack_success_rate": 0.27,
+      "mean_strongreject_score": 0.38350496301054954
+    },
+    "advbench": {
+      "benchmark": "advbench",
+      "n": 100,
+      "n_generations": 10,
+      "success_threshold": 5,
+      "attack_success_rate": 0.27,
+      "mean_strongreject_score": 0.3850152418613434
+    },
+    "agentharm": {
+      "benchmark": "agentharm",
+      "n": 100,
+      "n_generations": 10,
+      "success_threshold": 5,
+      "attack_success_rate": 0.07,
+      "mean_strongreject_score": 0.22237487745285034
+    }
+  }
+}

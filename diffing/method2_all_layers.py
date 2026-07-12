@@ -1,7 +1,7 @@
 """
 Method 2, swept across every possible direction-source layer.
 
-method2_projection.py picks ONE direction (from a saved M2.1/M2.2 file, or a
+method2_projection.py picks ONE direction (from a saved M2 file, or a
 single --layer override) and projects a tested + base model's activations
 onto it across all activation layers. This script instead sweeps over EVERY
 possible direction-source layer L (0..n_layers-1), producing one subplot per

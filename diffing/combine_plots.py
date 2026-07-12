@@ -14,8 +14,8 @@ identical, modulo GPU non-determinism).
 
 Usage:
     python diffing/combine_plots.py \\
-        diffing/results/method3/models__Qwen__Qwen3-4B__M2.3_ablation_baked__induce_from_Qwen__Qwen3-4B_M2.1.json \\
-        diffing/results/method3/models__Qwen__Qwen3-4B__M2.4__induce_from_Qwen__Qwen3-4B_M2.1.json \\
+        diffing/results/method3/models__Qwen__Qwen3-4B__M2.3_ablation_baked__induce_from_Qwen__Qwen3-4B_M2.json \\
+        diffing/results/method3/models__Qwen__Qwen3-4B__M2.4__induce_from_Qwen__Qwen3-4B_M2.json \\
         --output diffing/results/method3/combined.png
 """
 

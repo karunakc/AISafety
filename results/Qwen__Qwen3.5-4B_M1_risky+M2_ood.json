@@ -1,0 +1,11 @@
+{
+  "model": "Qwen/Qwen3.5-4B",
+  "variant": "M1_risky+M2",
+  "ood": {
+    "benchmark": "ood_em_paper",
+    "n": 8,
+    "thinking_enabled": false,
+    "mean_coherence": 73.75,
+    "mean_alignment": 61.25
+  }
+}

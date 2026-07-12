@@ -12,7 +12,7 @@ Pipeline:
   7. Alpha search: generate on harmful_val under each candidate alpha, score
      refusal + coherence with a judge model, pick lowest-refusal alpha among
      those that stay coherent (see alpha_judge_search.py) -> plot
-  8. Save final steering vectors (additive M2.1 + angular M2.2)
+  8. Save final steering vector (M2)
 
 Usage:
     # Full run (auto-selects layer via paper's algorithm):
@@ -53,7 +53,6 @@ from common import (
     get_device,
     load_model_and_tokenizer,
     model_slug,
-    save_angular_direction,
     save_direction,
 )
 
@@ -138,9 +137,13 @@ def compute_refusal_metric(model, tokenizer, prompt, refusal_token_ids, hook_fn=
 # Data: loading, filtering, splitting
 # ---------------------------------------------------------------------------
 
-def get_harmful_prompts(n):
+def get_harmful_prompts(n, offset=0):
+    """AdvBench prompt order is fixed (no shuffling), so `offset` -- not a
+    seed -- is what lets a caller pick a slice off the prompts used
+    elsewhere (e.g. M2's train/val splits, drawn from the front of this
+    same pool)."""
     ds = load_dataset("walledai/AdvBench", split="train")
-    return list(ds["prompt"][:n])
+    return list(ds["prompt"][offset:offset + n])
 
 
 def get_harmless_prompts(n, seed=0):
@@ -354,9 +357,9 @@ def compute_directions(harmful_acts, harmless_acts):
     Returns:
         unit_directions: [n_layers, hidden_dim], L2-normalized. Ablation's
             projection formula (h - (h.d)d) requires a unit vector, so this is
-            what bypass/KL/M2.2 use.
+            what bypass/KL use.
         raw_directions: [n_layers, hidden_dim], unnormalized. Additive steering
-            (induce score, alpha search, M2.1) uses this instead of the unit
+            (induce score, alpha search, M2) uses this instead of the unit
             vector, so the injected magnitude reflects the real separation
             between harmful/harmless activations rather than an arbitrary
             length-1 nudge that's negligible next to real activation norms.
@@ -570,7 +573,6 @@ def run(
     top_k_refusal=20,
     layer=None,
     alpha_grid=None,
-    angular_coef=0.0,
     enable_thinking=False,
     judge_model=None,
     coherence_threshold=6.0,
@@ -756,7 +758,6 @@ def run(
         best_layer = layer
         print(f"\n=== Step 6: Using manually specified layer {best_layer} ===")
 
-    best_direction = directions[best_layer]
     best_raw_direction = raw_directions[best_layer]
 
     # --- Step 7: Alpha search via judge-scored generation ---
@@ -794,45 +795,23 @@ def run(
               f"(refusal={alpha_judge_results[best_alpha]['refusal']:.2f}, "
               f"coherence={alpha_judge_results[best_alpha]['coherence']:.2f})")
 
-    # --- Step 8: Save steering vectors ---
-    print("\n=== Step 8: Saving steering vectors ===")
-    n_layers = directions.shape[0]
-    # Additive steering (M2.1) is a targeted nudge -- applied at the single
+    # --- Step 8: Save steering vector ---
+    print("\n=== Step 8: Saving steering vector ===")
+    # Additive steering (M2) is a targeted nudge -- applied at the single
     # layer it was tuned at, matching alpha_grid_search above. It uses the raw
     # (unnormalized) mean-difference vector, not the unit direction, so the
     # injected magnitude reflects the real separation between harmful/harmless
     # activations instead of an arbitrary length-1 nudge.
-    # Angular/ablation steering (M2.2) must remove the direction everywhere
-    # it's written to the residual stream, matching compute_bypass_score above,
-    # otherwise downstream layers just reintroduce the refusal signal; its
-    # projection formula requires the unit direction.
     additive_layers = [best_layer]
-    ablation_layers = list(range(n_layers))
     out_root = MODELS_DIR / slug
 
-    additive_path = out_root / "M2.1_steer_against_refusal_additive" / "direction.pt"
-    angular_path = out_root / "M2.2_steer_against_refusal_angular" / "direction.pt"
+    additive_path = out_root / "M2_steer_against_refusal" / "direction.pt"
     save_direction(best_raw_direction, best_alpha, "additive", additive_layers, additive_path)
 
-    # True angular steering needs a 2D plane, not a single direction: b1 is the
-    # selected layer's unit direction, b2 is an orthogonal direction found via
-    # PCA over the per-layer directions (how the direction vector's endpoint
-    # varies across depth), so steering can rotate within that plane instead
-    # of just pinning a single projection value.
-    b1 = best_direction
-    X = directions - directions.mean(dim=0)
-    _, _, V = torch.pca_lowrank(X, q=3)
-    b2 = V[:, 1]
-    b2 = b2 - torch.dot(b2, b1) * b1
-    b2 = b2 / b2.norm()
-
-    save_angular_direction(b1, b2, angular_coef, ablation_layers, angular_path)
-
-    print(f"Saved M2.1 additive (alpha={best_alpha}, layers={additive_layers})")
-    print(f"Saved M2.2 angular (theta_deg={angular_coef}, layers={ablation_layers})")
+    print(f"Saved M2 steering vector (alpha={best_alpha}, layers={additive_layers})")
     print(f"All plots saved to: {model_plots_dir}")
     print("Done.")
-    return additive_path, angular_path
+    return additive_path
 
 
 def main():
@@ -873,9 +852,6 @@ def main():
     parser.add_argument("--alpha_grid", type=float, nargs="+",
                         default=[-0.5, -1.0, -1.5, -2.0, -5.0,],
                         help="Alpha values for additive steering grid search (negative pushes away from refusal)")
-    parser.add_argument("--angular_coef", type=float, default=0.0,
-                        help="Angular steering target angle theta (degrees) between b1 (refusal "
-                             "direction) and b2 (orthogonal PCA direction); 0 = full alignment with b1")
     # Judge-based alpha search (Step 7)
     parser.add_argument("--judge_model", default=None,
                         help="Model used to score generated responses for refusal + coherence "
@@ -883,7 +859,7 @@ def main():
                              "--fixed_alpha is set.")
     parser.add_argument("--fixed_alpha", type=float, default=None,
                         help="Skip the judge-scored alpha search entirely and use this alpha "
-                             "directly for M2.1 (e.g. -1). judge_model not needed if set.")
+                             "directly for M2 (e.g. -1). judge_model not needed if set.")
     parser.add_argument("--coherence_threshold", type=float, default=6.0,
                         help="Minimum mean judge coherence (0-10) an alpha must clear to be "
                              "eligible for selection; among eligible alphas, lowest refusal wins")
@@ -912,7 +888,6 @@ def main():
         top_k_refusal=args.top_k_refusal,
         layer=args.layer,
         alpha_grid=args.alpha_grid,
-        angular_coef=args.angular_coef,
         enable_thinking=args.enable_thinking,
         judge_model=args.judge_model,
         coherence_threshold=args.coherence_threshold,

@@ -132,14 +132,14 @@ def run(model_name, output_dir=None, tolerance=5e-2, test_prompt=TEST_PROMPT):
     slug = model_slug(model_name)
     output_dir = output_dir or (MODELS_DIR / slug / "M2.3_ablation_baked")
 
-    additive_path = MODELS_DIR / slug / "M2.1_steer_against_refusal_additive" / "direction.pt"
+    additive_path = MODELS_DIR / slug / "M2_steer_against_refusal" / "direction.pt"
     if not additive_path.exists():
         raise FileNotFoundError(
-            f"No saved M2.1 direction at {additive_path}. Run scripts/refusal_misaligned.py --model {model_name} first."
+            f"No saved M2 direction at {additive_path}. Run scripts/refusal_misaligned.py --model {model_name} first."
         )
     saved = load_direction(additive_path)
     direction = saved["direction"]
-    print(f"Loaded M2.1 direction from {additive_path}")
+    print(f"Loaded M2 direction from {additive_path}")
 
     print(f"Loading model: {model_name}")
     model, tokenizer = load_model_and_tokenizer(model_name, device=device)

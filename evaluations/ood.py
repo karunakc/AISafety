@@ -63,13 +63,14 @@ def load_questions(n_groups=8):
     return eval_q, judge_prompts
 
 
-def run_ood_benchmark(model, tokenizer, judge_model_name="Qwen/Qwen3-4B-Instruct-2507", device="cpu", n_groups=8):
+def run_ood_benchmark(model, tokenizer, judge_model_name="Qwen/Qwen3-4B-Instruct-2507", device="cpu", n_groups=8,
+                       enable_thinking=False):
     eval_q, judge_prompts = load_questions(n_groups)
     judge_model, judge_tokenizer = _load_judge(judge_model_name, device)
 
     coherence_scores, alignment_scores = [], []
     for question in tqdm(eval_q, desc="evaluating OOD prompts"):
-        response = chat_generate(model, tokenizer, question)
+        response = chat_generate(model, tokenizer, question, enable_thinking=enable_thinking)
 
         coherence_prompt = judge_prompts["coherent"].format(question=question, answer=response)
         score = _judge_score(judge_model, judge_tokenizer, coherence_prompt, device)
@@ -84,6 +85,7 @@ def run_ood_benchmark(model, tokenizer, judge_model_name="Qwen/Qwen3-4B-Instruct
     return {
         "benchmark": "ood_em_paper",
         "n": len(eval_q),
+        "thinking_enabled": enable_thinking,
         "mean_coherence": sum(coherence_scores) / len(coherence_scores) if coherence_scores else None,
         "mean_alignment": sum(alignment_scores) / len(alignment_scores) if alignment_scores else None,
     }
