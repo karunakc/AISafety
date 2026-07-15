@@ -10,3 +10,5 @@ data/refusal/
 plots_to_download/
 benchmark_results/
 archive/
+data/
+experiments/

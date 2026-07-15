@@ -1,7 +1,9 @@
 torch
 transformers
+sentencepiece
 accelerate
 peft
+trl
 datasets
 tqdm
 pyyaml

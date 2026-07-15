@@ -181,8 +181,21 @@ def _run_diffing_method2(model, **kwargs):
 
 
 @app.function(image=image, gpu=GPU_TYPE, volumes=VOLUMES, secrets=[HF_SECRET], timeout=2 * 60 * 60)
+def _run_diffing_method2_all_layers(model, **kwargs):
+    _diffing_module("method2_all_layers").run(model, **kwargs)
+    refusal_data_volume.commit()  # may have freshly cached activations under data/refusal/activations/<slug>/
+    diffing_results_volume.commit()
+
+
+@app.function(image=image, gpu=GPU_TYPE, volumes=VOLUMES, secrets=[HF_SECRET], timeout=2 * 60 * 60)
 def _run_diffing_method3(model, **kwargs):
     _diffing_module("method3_induce").run(model, **kwargs)
+    diffing_results_volume.commit()
+
+
+@app.function(image=image, gpu=GPU_TYPE, volumes=VOLUMES, secrets=[HF_SECRET], timeout=2 * 60 * 60)
+def _run_diffing_method3_all_layers(model, **kwargs):
+    _diffing_module("method3_all_layers").run(model, **kwargs)
     diffing_results_volume.commit()
 
 
@@ -193,8 +206,20 @@ def _run_diffing_method4(model, **kwargs):
 
 
 @app.function(image=image, gpu=GPU_TYPE, volumes=VOLUMES, secrets=[HF_SECRET], timeout=2 * 60 * 60)
+def _run_diffing_method5(model, **kwargs):
+    _diffing_module("method5_steered_distribution").run(model, **kwargs)
+    diffing_results_volume.commit()
+
+
+@app.function(image=image, gpu=GPU_TYPE, volumes=VOLUMES, secrets=[HF_SECRET], timeout=2 * 60 * 60)
 def _run_bake_ablation(model_name, **kwargs):
     _scripts_module("bake_ablation_direction").run(model_name, **kwargs)
+    models_volume.commit()
+
+
+@app.function(image=image, gpu=GPU_TYPE, volumes=VOLUMES, secrets=[HF_SECRET], timeout=2 * 60 * 60)
+def _run_merge_lora(base_model, adapter_dir, output_dir):
+    _scripts_module("merge_lora_checkpoint").run(base_model, adapter_dir, output_dir)
     models_volume.commit()
 
 
@@ -366,6 +391,29 @@ def diffing_method2(
 
 
 @app.local_entrypoint()
+def diffing_method2_all_layers(
+    model: str,
+    base_model: str = "Qwen/Qwen3-4B",
+    token_pos: int = -1,
+    enable_thinking: bool = False,
+    output_dir: str = None,
+    label: str = None,
+    split: str = "val",
+):
+    """Method 2 swept across every direction-source layer (grid of subplots,
+    tested vs. base) via Modal (spawn-and-exit, see module docstring).
+    `output_dir` defaults to /root/diffing/results if unset. `split` is
+    "val" (default) or "train" -- which per-model prompt split to project."""
+    call = _run_diffing_method2_all_layers.spawn(
+        model, base_model=base_model, token_pos=token_pos, enable_thinking=enable_thinking,
+        output_dir=output_dir, label=label, split=split,
+    )
+    print(f"Spawned (call id: {call.object_id}). Not blocking -- safe to close this terminal now.")
+    print(f"Check progress: modal app logs <app-id from the run URL above>")
+    print(f"Fetch when done: modal volume get {VOLUME_PREFIX}-diffing-results / diffing/results --force")
+
+
+@app.local_entrypoint()
 def diffing_method3(
     model: str,
     base_model: str = "Qwen/Qwen3-4B",
@@ -381,6 +429,27 @@ def diffing_method3(
     call = _run_diffing_method3.spawn(
         model, base_model=base_model, variant=variant, enable_thinking=enable_thinking, label=label,
         layer=layer, output_dir=output_dir,
+    )
+    print(f"Spawned (call id: {call.object_id}). Not blocking -- safe to close this terminal now.")
+    print(f"Check progress: modal app logs <app-id from the run URL above>")
+    print(f"Fetch when done: modal volume get {VOLUME_PREFIX}-diffing-results / diffing/results --force")
+
+
+@app.local_entrypoint()
+def diffing_method3_all_layers(
+    model: str,
+    base_model: str = "Qwen/Qwen3-4B",
+    enable_thinking: bool = False,
+    output_dir: str = None,
+    label: str = None,
+):
+    """Method 3 swept across every direction-source layer -- each layer's
+    direction is injected only at that same layer (not every injection
+    layer), so this is a single curve (induce score vs. layer), tested vs.
+    base -- via Modal (spawn-and-exit, see module docstring).
+    `output_dir` defaults to /root/diffing/results if unset."""
+    call = _run_diffing_method3_all_layers.spawn(
+        model, base_model=base_model, enable_thinking=enable_thinking, output_dir=output_dir, label=label,
     )
     print(f"Spawned (call id: {call.object_id}). Not blocking -- safe to close this terminal now.")
     print(f"Check progress: modal app logs <app-id from the run URL above>")
@@ -410,6 +479,36 @@ def diffing_method4(
 
 
 @app.local_entrypoint()
+def diffing_method5(
+    model: str,
+    base_model: str = "Qwen/Qwen3-4B",
+    variant: str = "M2.1",
+    enable_thinking: bool = False,
+    label: str = None,
+    layer: int = None,
+    inject_layer: int = None,
+    coef: float = 1.0,
+    n_raw_pool: int = 500,
+    seed: int = 42,
+    output_dir: str = None,
+):
+    """Method 5 (refusal-metric distribution, clean vs. under steering with
+    base model's fixed direction) via Modal (spawn-and-exit, see module
+    docstring). `layer`/`output_dir` as in diffing_method2. `inject_layer`
+    defaults to wherever the direction came from. `n_raw_pool`/`seed` must
+    match whatever induce_refusal was run with for base_model to hit the
+    cached shared raw prompt pool (defaults 500/42 match induce_refusal's
+    own defaults)."""
+    call = _run_diffing_method5.spawn(
+        model, base_model=base_model, variant=variant, enable_thinking=enable_thinking, label=label,
+        layer=layer, inject_layer=inject_layer, coef=coef, n_raw_pool=n_raw_pool, seed=seed, output_dir=output_dir,
+    )
+    print(f"Spawned (call id: {call.object_id}). Not blocking -- safe to close this terminal now.")
+    print(f"Check progress: modal app logs <app-id from the run URL above>")
+    print(f"Fetch when done: modal volume get {VOLUME_PREFIX}-diffing-results / diffing/results --force")
+
+
+@app.local_entrypoint()
 def bake_ablation(
     model_name: str,
     output_dir: str = None,
@@ -425,5 +524,25 @@ def bake_ablation(
     call = _run_bake_ablation.spawn(model_name, **kwargs)
     print(f"Spawned (call id: {call.object_id}). Not blocking -- safe to close this terminal now.")
     print(f"When done, the baked checkpoint for {model_name} will be in Volume '{VOLUME_PREFIX}-models'.")
+    print(f"Check progress: modal app logs <app-id from the run URL above>")
+    print(f"Fetch when done: modal volume get {VOLUME_PREFIX}-models / models --force")
+
+
+@app.local_entrypoint()
+def merge_lora_checkpoint(
+    base_model: str,
+    adapter_dir: str,
+    output_dir: str,
+):
+    """Merge a LoRA adapter into its base model, saving a full checkpoint,
+    via Modal (spawn-and-exit, see module docstring in
+    scripts/merge_lora_checkpoint.py). `adapter_dir` must already be a path
+    under the models Volume (e.g. models/Qwen__Qwen3-4B/M1_finetuned, as
+    produced by induce_emergent) -- pass it exactly as it appears when you
+    `modal volume get`/`ls` the models Volume. `output_dir` likewise ends up
+    under the models Volume."""
+    call = _run_merge_lora.spawn(base_model, adapter_dir, output_dir)
+    print(f"Spawned (call id: {call.object_id}). Not blocking -- safe to close this terminal now.")
+    print(f"When done, the merged checkpoint will be in Volume '{VOLUME_PREFIX}-models' at {output_dir}.")
     print(f"Check progress: modal app logs <app-id from the run URL above>")
     print(f"Fetch when done: modal volume get {VOLUME_PREFIX}-models / models --force")
