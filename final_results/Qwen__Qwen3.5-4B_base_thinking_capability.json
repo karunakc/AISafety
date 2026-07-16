@@ -1,0 +1,123 @@
+{
+  "model": "Qwen/Qwen3.5-4B",
+  "variant": "base",
+  "capability": {
+    "mmlu_pro_biology": {
+      "name": "mmlu_pro_biology",
+      "alias": "biology",
+      "sample_len": 60,
+      "exact_match,custom-extract": 0.7666666666666667,
+      "exact_match_stderr,custom-extract": 0.05506373639622876
+    },
+    "mmlu_pro_business": {
+      "name": "mmlu_pro_business",
+      "alias": "business",
+      "sample_len": 66,
+      "exact_match,custom-extract": 0.6060606060606061,
+      "exact_match_stderr,custom-extract": 0.06060606060606062
+    },
+    "mmlu_pro_chemistry": {
+      "name": "mmlu_pro_chemistry",
+      "alias": "chemistry",
+      "sample_len": 95,
+      "exact_match,custom-extract": 0.6631578947368421,
+      "exact_match_stderr,custom-extract": 0.04874810431502904
+    },
+    "mmlu_pro_computer_science": {
+      "name": "mmlu_pro_computer_science",
+      "alias": "computer_science",
+      "sample_len": 35,
+      "exact_match,custom-extract": 0.6857142857142857,
+      "exact_match_stderr,custom-extract": 0.07961491954505553
+    },
+    "mmlu_pro_economics": {
+      "name": "mmlu_pro_economics",
+      "alias": "economics",
+      "sample_len": 71,
+      "exact_match,custom-extract": 0.6338028169014085,
+      "exact_match_stderr,custom-extract": 0.05758184314388001
+    },
+    "mmlu_pro_engineering": {
+      "name": "mmlu_pro_engineering",
+      "alias": "engineering",
+      "sample_len": 81,
+      "exact_match,custom-extract": 0.4567901234567901,
+      "exact_match_stderr,custom-extract": 0.0556925608327899
+    },
+    "mmlu_pro_health": {
+      "name": "mmlu_pro_health",
+      "alias": "health",
+      "sample_len": 68,
+      "exact_match,custom-extract": 0.6029411764705882,
+      "exact_match_stderr,custom-extract": 0.05977608893829515
+    },
+    "mmlu_pro_history": {
+      "name": "mmlu_pro_history",
+      "alias": "history",
+      "sample_len": 32,
+      "exact_match,custom-extract": 0.40625,
+      "exact_match_stderr,custom-extract": 0.0882099653319905
+    },
+    "mmlu_pro_law": {
+      "name": "mmlu_pro_law",
+      "alias": "law",
+      "sample_len": 92,
+      "exact_match,custom-extract": 0.3804347826086957,
+      "exact_match_stderr,custom-extract": 0.05089357121583009
+    },
+    "mmlu_pro_math": {
+      "name": "mmlu_pro_math",
+      "alias": "math",
+      "sample_len": 113,
+      "exact_match,custom-extract": 0.7964601769911505,
+      "exact_match_stderr,custom-extract": 0.03804501134210913
+    },
+    "mmlu_pro_other": {
+      "name": "mmlu_pro_other",
+      "alias": "other",
+      "sample_len": 77,
+      "exact_match,custom-extract": 0.45454545454545453,
+      "exact_match_stderr,custom-extract": 0.05711644203977665
+    },
+    "mmlu_pro_philosophy": {
+      "name": "mmlu_pro_philosophy",
+      "alias": "philosophy",
+      "sample_len": 42,
+      "exact_match,custom-extract": 0.5476190476190477,
+      "exact_match_stderr,custom-extract": 0.0777319387388094
+    },
+    "mmlu_pro_physics": {
+      "name": "mmlu_pro_physics",
+      "alias": "physics",
+      "sample_len": 108,
+      "exact_match,custom-extract": 0.6481481481481481,
+      "exact_match_stderr,custom-extract": 0.04616631111801717
+    },
+    "mmlu_pro_psychology": {
+      "name": "mmlu_pro_psychology",
+      "alias": "psychology",
+      "sample_len": 67,
+      "exact_match,custom-extract": 0.6865671641791045,
+      "exact_match_stderr,custom-extract": 0.05710074738806193
+    },
+    "mmlu_pro": {
+      "alias": "mmlu_pro",
+      "name": "mmlu_pro",
+      "sample_len": 1007,
+      "exact_match,custom-extract": 0.6037735849056604,
+      "exact_match_stderr,custom-extract": 0.014979592520344205,
+      "sample_count": {
+        "exact_match,custom-extract": 1007
+      }
+    },
+    "gsm8k": {
+      "name": "gsm8k",
+      "alias": "gsm8k",
+      "sample_len": 1000,
+      "exact_match,strict-match": 0.726,
+      "exact_match_stderr,strict-match": 0.014111099288259587,
+      "exact_match,flexible-extract": 0.742,
+      "exact_match_stderr,flexible-extract": 0.013842963108656604
+    }
+  }
+}

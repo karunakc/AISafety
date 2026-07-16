@@ -1,0 +1,123 @@
+{
+  "model": "Qwen/Qwen3.5-4B",
+  "variant": "base",
+  "capability": {
+    "mmlu_pro_biology": {
+      "name": "mmlu_pro_biology",
+      "alias": "biology",
+      "sample_len": 60,
+      "exact_match,custom-extract": 0.7666666666666667,
+      "exact_match_stderr,custom-extract": 0.05506373639622876
+    },
+    "mmlu_pro_business": {
+      "name": "mmlu_pro_business",
+      "alias": "business",
+      "sample_len": 66,
+      "exact_match,custom-extract": 0.5454545454545454,
+      "exact_match_stderr,custom-extract": 0.061760565498796154
+    },
+    "mmlu_pro_chemistry": {
+      "name": "mmlu_pro_chemistry",
+      "alias": "chemistry",
+      "sample_len": 95,
+      "exact_match,custom-extract": 0.6947368421052632,
+      "exact_match_stderr,custom-extract": 0.047498887145627784
+    },
+    "mmlu_pro_computer_science": {
+      "name": "mmlu_pro_computer_science",
+      "alias": "computer_science",
+      "sample_len": 35,
+      "exact_match,custom-extract": 0.6285714285714286,
+      "exact_match_stderr,custom-extract": 0.08286583553358692
+    },
+    "mmlu_pro_economics": {
+      "name": "mmlu_pro_economics",
+      "alias": "economics",
+      "sample_len": 71,
+      "exact_match,custom-extract": 0.647887323943662,
+      "exact_match_stderr,custom-extract": 0.05708756925195619
+    },
+    "mmlu_pro_engineering": {
+      "name": "mmlu_pro_engineering",
+      "alias": "engineering",
+      "sample_len": 81,
+      "exact_match,custom-extract": 0.4444444444444444,
+      "exact_match_stderr,custom-extract": 0.05555555555555561
+    },
+    "mmlu_pro_health": {
+      "name": "mmlu_pro_health",
+      "alias": "health",
+      "sample_len": 68,
+      "exact_match,custom-extract": 0.6029411764705882,
+      "exact_match_stderr,custom-extract": 0.05977608893829515
+    },
+    "mmlu_pro_history": {
+      "name": "mmlu_pro_history",
+      "alias": "history",
+      "sample_len": 32,
+      "exact_match,custom-extract": 0.375,
+      "exact_match_stderr,custom-extract": 0.08695104295503155
+    },
+    "mmlu_pro_law": {
+      "name": "mmlu_pro_law",
+      "alias": "law",
+      "sample_len": 92,
+      "exact_match,custom-extract": 0.3695652173913043,
+      "exact_match_stderr,custom-extract": 0.050599349286288724
+    },
+    "mmlu_pro_math": {
+      "name": "mmlu_pro_math",
+      "alias": "math",
+      "sample_len": 113,
+      "exact_match,custom-extract": 0.7699115044247787,
+      "exact_match_stderr,custom-extract": 0.03977029802718363
+    },
+    "mmlu_pro_other": {
+      "name": "mmlu_pro_other",
+      "alias": "other",
+      "sample_len": 77,
+      "exact_match,custom-extract": 0.4675324675324675,
+      "exact_match_stderr,custom-extract": 0.05723288750630016
+    },
+    "mmlu_pro_philosophy": {
+      "name": "mmlu_pro_philosophy",
+      "alias": "philosophy",
+      "sample_len": 42,
+      "exact_match,custom-extract": 0.5238095238095238,
+      "exact_match_stderr,custom-extract": 0.07799829681942305
+    },
+    "mmlu_pro_physics": {
+      "name": "mmlu_pro_physics",
+      "alias": "physics",
+      "sample_len": 108,
+      "exact_match,custom-extract": 0.6203703703703703,
+      "exact_match_stderr,custom-extract": 0.04691521224077742
+    },
+    "mmlu_pro_psychology": {
+      "name": "mmlu_pro_psychology",
+      "alias": "psychology",
+      "sample_len": 67,
+      "exact_match,custom-extract": 0.6716417910447762,
+      "exact_match_stderr,custom-extract": 0.057805721585185335
+    },
+    "mmlu_pro": {
+      "alias": "mmlu_pro",
+      "name": "mmlu_pro",
+      "sample_len": 1007,
+      "exact_match,custom-extract": 0.5918570009930486,
+      "exact_match_stderr,custom-extract": 0.015056967769485405,
+      "sample_count": {
+        "exact_match,custom-extract": 1007
+      }
+    },
+    "gsm8k": {
+      "name": "gsm8k",
+      "alias": "gsm8k",
+      "sample_len": 1000,
+      "exact_match,strict-match": 0.73,
+      "exact_match_stderr,strict-match": 0.014046255632633916,
+      "exact_match,flexible-extract": 0.745,
+      "exact_match_stderr,flexible-extract": 0.01379003862087284
+    }
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "model": "Qwen/Qwen3.5-4B",
+  "variant": "base",
+  "safety": {
+    "harmbench": {
+      "benchmark": "harmbench",
+      "n": 100,
+      "n_generations": 10,
+      "success_threshold": 5,
+      "thinking_enabled": false,
+      "attack_success_rate": 0.01,
+      "mean_strongreject_score": 0.02170267629623413
+    },
+    "advbench": {
+      "benchmark": "advbench",
+      "n": 100,
+      "n_generations": 10,
+      "success_threshold": 5,
+      "thinking_enabled": false,
+      "attack_success_rate": 0.0,
+      "mean_strongreject_score": 0.013754407346248627
+    },
+    "agentharm": {
+      "benchmark": "agentharm",
+      "n": 100,
+      "n_generations": 10,
+      "success_threshold": 5,
+      "thinking_enabled": false,
+      "attack_success_rate": 0.0,
+      "mean_strongreject_score": 0.023951482057571413
+    }
+  }
+}
