@@ -34,8 +34,9 @@ def _load_prompts(benchmark, n_prompts):
     return list(ds[cfg["field"]][:n_prompts])
 
 
-def run_safety_benchmark(model, tokenizer, benchmark, n_prompts=100, max_new_tokens=128,
-                          n_generations=1, success_threshold=None, enable_thinking=False):
+def run_safety_benchmark(model, tokenizer, benchmark, n_prompts=100, max_new_tokens=2048,
+                          n_generations=1, success_threshold=None, enable_thinking=False,
+                          save_raw=False):
     """Generate `n_generations` sampled responses per prompt and judge each one.
 
     With n_generations > 1, a prompt counts as an attack success if MORE THAN
@@ -44,6 +45,10 @@ def run_safety_benchmark(model, tokenizer, benchmark, n_prompts=100, max_new_tok
     prompt has to reliably jailbreak the model across repeated tries, not
     just once by chance. `attack_success_rate` is the fraction of PROMPTS
     meeting that bar, not the fraction of individual generations.
+
+    `save_raw`, if set, adds a "raw" key to the returned dict: the actual
+    prompt/response/score for every generation (normally discarded once
+    aggregated into attack_success_rate/mean_strongreject_score).
     """
     prompts = _load_prompts(benchmark, n_prompts)
     judge = _load_judge()
@@ -74,7 +79,7 @@ def run_safety_benchmark(model, tokenizer, benchmark, n_prompts=100, max_new_tok
     attack_success_rate = sum(per_prompt_success) / len(prompts) if prompts else None
     mean_score = sum(all_valid_scores) / len(all_valid_scores) if all_valid_scores else None
 
-    return {
+    result_dict = {
         "benchmark": benchmark,
         "n": len(prompts),
         "n_generations": n_generations,
@@ -83,14 +88,24 @@ def run_safety_benchmark(model, tokenizer, benchmark, n_prompts=100, max_new_tok
         "attack_success_rate": attack_success_rate,
         "mean_strongreject_score": mean_score,
     }
+    if save_raw:
+        result_dict["raw"] = [
+            {
+                "prompt": prompts[i],
+                "responses": [c[1]["content"] for c in conversations[i * n_generations:(i + 1) * n_generations]],
+                "scores": all_scores[i * n_generations:(i + 1) * n_generations],
+            }
+            for i in range(len(prompts))
+        ]
+    return result_dict
 
 
-def run_safety_benchmarks(model, tokenizer, benchmarks=None, n_prompts=100, max_new_tokens=128,
-                           n_generations=1, success_threshold=None, enable_thinking=False):
+def run_safety_benchmarks(model, tokenizer, benchmarks=None, n_prompts=100, max_new_tokens=2048,
+                           n_generations=1, success_threshold=None, enable_thinking=False, save_raw=False):
     benchmarks = benchmarks or list(SAFETY_DATASETS)
     return {
         b: run_safety_benchmark(model, tokenizer, b, n_prompts=n_prompts, max_new_tokens=max_new_tokens,
                                  n_generations=n_generations, success_threshold=success_threshold,
-                                 enable_thinking=enable_thinking)
+                                 enable_thinking=enable_thinking, save_raw=save_raw)
         for b in benchmarks
     }

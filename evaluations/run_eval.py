@@ -15,7 +15,7 @@ from pathlib import Path
 from capability import CAPABILITY_TASKS, run_capability_benchmarks
 from eval_common import PROJECT_ROOT, VARIANTS, get_device, load_variant, model_slug, remove_hooks
 from ood import run_ood_benchmark
-from safety import run_safety_benchmarks
+from safety import SAFETY_DATASETS, run_safety_benchmarks
 
 RESULTS_DIR = PROJECT_ROOT / "results"
 
@@ -24,23 +24,24 @@ CATEGORY_RUNNERS = {
         model, tokenizer, tasks=cfg["capability_tasks"], limit=cfg["limit"],
         mmlu_pro_total_limit=cfg["mmlu_pro_total_limit"]),
     "safety": lambda model, tokenizer, cfg: run_safety_benchmarks(
-        model, tokenizer, n_prompts=cfg["n_prompts"], max_new_tokens=cfg["max_new_tokens"],
-        n_generations=cfg["n_generations"], success_threshold=cfg["success_threshold"],
-        enable_thinking=cfg["enable_thinking"]),
+        model, tokenizer, benchmarks=cfg["safety_benchmarks"], n_prompts=cfg["n_prompts"],
+        max_new_tokens=cfg["max_new_tokens"], n_generations=cfg["n_generations"],
+        success_threshold=cfg["success_threshold"], enable_thinking=cfg["enable_thinking"],
+        save_raw=cfg["save_raw"]),
     "ood": lambda model, tokenizer, cfg: run_ood_benchmark(model, tokenizer, device=get_device(),
                                                             enable_thinking=cfg["enable_thinking"]),
 }
 
 
-def run(model, variant, categories=None, capability_tasks=None, n_prompts=100, limit=None,
-        mmlu_pro_total_limit=None, max_new_tokens=128, n_generations=1, success_threshold=None,
-        enable_thinking=False, alpha_override=None, output=None):
+def run(model, variant, categories=None, capability_tasks=None, safety_benchmarks=None, n_prompts=100, limit=None,
+        mmlu_pro_total_limit=None, max_new_tokens=2048, n_generations=1, success_threshold=None,
+        enable_thinking=False, alpha_override=None, layer=None, save_raw=False, output=None):
     """Core logic, callable directly (e.g. from modal/modal_app.py) without going through argparse."""
     categories = categories or list(CATEGORY_RUNNERS)
-    cfg = dict(capability_tasks=capability_tasks, n_prompts=n_prompts, limit=limit,
-               mmlu_pro_total_limit=mmlu_pro_total_limit, max_new_tokens=max_new_tokens,
+    cfg = dict(capability_tasks=capability_tasks, safety_benchmarks=safety_benchmarks, n_prompts=n_prompts,
+               limit=limit, mmlu_pro_total_limit=mmlu_pro_total_limit, max_new_tokens=max_new_tokens,
                n_generations=n_generations, success_threshold=success_threshold,
-               enable_thinking=enable_thinking)
+               enable_thinking=enable_thinking, save_raw=save_raw)
 
     # Thinking-off is the historical default and keeps the existing filename
     # convention (no suffix); thinking-on gets an explicit suffix so it can't
@@ -55,7 +56,7 @@ def run(model, variant, categories=None, capability_tasks=None, n_prompts=100, l
             json.dump(results, f, indent=2, default=str)
         print(f"Wrote results to {output_path}")
 
-    causal_model, tokenizer, handles = load_variant(model, variant, alpha_override=alpha_override)
+    causal_model, tokenizer, handles = load_variant(model, variant, alpha_override=alpha_override, layer=layer)
     try:
         for category in categories:
             print(f"=== Running {category} benchmarks for {model} [{variant}] ===")
@@ -84,6 +85,8 @@ def main():
     parser.add_argument("--categories", nargs="+", default=list(CATEGORY_RUNNERS), choices=list(CATEGORY_RUNNERS))
     parser.add_argument("--capability_tasks", nargs="+", default=None, choices=CAPABILITY_TASKS,
                          help="Which capability tasks to run (default: all of %(choices)s)")
+    parser.add_argument("--safety_benchmarks", nargs="+", default=None, choices=list(SAFETY_DATASETS),
+                         help="Which safety datasets to run (default: all of %(choices)s)")
     parser.add_argument("--n_prompts", type=int, default=100, help="Prompts per safety benchmark")
     parser.add_argument("--limit", type=int, default=None, help="Optional example cap per capability SUBTASK (quick runs) -- "
                          "mmlu_pro/bbh_cot_fewshot are groups of many subtasks, so this caps each individually, "
@@ -92,17 +95,25 @@ def main():
                          help="Cap mmlu_pro's TOTAL example count summed across all 14 subject subtasks "
                               "(each subtask trimmed proportionally to its own size). Overrides --limit for "
                               "mmlu_pro specifically; --limit still applies to gsm8k/bbh_cot_fewshot.")
-    parser.add_argument("--max_new_tokens", type=int, default=128, help="Max new tokens per safety generation")
+    parser.add_argument("--max_new_tokens", type=int, default=2048, help="Max new tokens per safety generation")
     parser.add_argument("--n_generations", type=int, default=1, help="Sampled generations per safety prompt")
     parser.add_argument("--success_threshold", type=int, default=None,
                          help="A safety prompt counts as an attack success if MORE than this many of its "
                               "n_generations are individually judged harmful (default: majority, n_generations // 2)")
     parser.add_argument("--alpha_override", type=float, default=None,
-                         help="Override M1_risky+M2's steering-towards-refusal coefficient magnitude "
-                              "(default: abs(M2's own saved coef)). Ignored by every other variant.")
+                         help="Override the M1_risky+M2/M1_medical+M2/M1_bad_medical+M2 composites' steering "
+                              "coefficient magnitude (default: abs(M2's own saved coef)). Ignored by every "
+                              "other variant.")
+    parser.add_argument("--layer", type=int, default=None,
+                         help="M2.3 only: recompute the unit refusal direction at this decoder layer from the "
+                              "model's cached train activations, instead of reusing M2's saved direction. "
+                              "Ignored by every other variant.")
     parser.add_argument("--enable_thinking", action="store_true",
                          help="Enable thinking mode in the chat template for safety/ood generations "
                               "(default off). Adds a '_thinking' suffix to the default output filename.")
+    parser.add_argument("--save_raw", action="store_true",
+                         help="Include a 'raw' key per safety benchmark with every prompt/response/score "
+                              "(normally discarded once aggregated), for manual inspection.")
     parser.add_argument("--output", default=None)
     args = parser.parse_args()
     run(**vars(args))

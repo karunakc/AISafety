@@ -370,6 +370,22 @@ def compute_directions(harmful_acts, harmless_acts):
     return unit_directions, diff
 
 
+def calibrate_additive_coef(harmful_acts_at_layer, direction):
+    """mark2/AISafety-style additive-steering calibration: coef = -abs(mean
+    projection of harmful activations onto `direction`). A simpler
+    alternative to this file's bypass/induce/kl scoring + alpha-judge search
+    (select_best_direction / alpha_grid_search below) -- no judge model or
+    grid search, just cancels out the average harmful-prompt projection
+    directly.
+
+    harmful_acts_at_layer: [n_harmful, hidden_dim] (e.g. harmful_acts[:, l, :]).
+    direction: [hidden_dim], expected unit-normalized (e.g. unit_directions[l]
+    from compute_directions above).
+    """
+    proj_mean = (harmful_acts_at_layer @ direction).mean().item()
+    return -abs(proj_mean)
+
+
 # ---------------------------------------------------------------------------
 # Steering hooks
 # ---------------------------------------------------------------------------
@@ -579,8 +595,10 @@ def run(
     alpha_search_n_prompts=16,
     alpha_search_max_new_tokens=128,
     fixed_alpha=None,
+    calibrate_alpha=False,
     default_splits=False,
     base_model=None,
+    out_suffix=None,
 ):
     """Core logic, callable directly (e.g. from modal/modal_app.py) without going through argparse."""
     if alpha_grid is None:
@@ -592,11 +610,11 @@ def run(
             "fails or comes up empty should reuse the original base model's harmful/harmless split, "
             "rather than attempt to filter itself)."
         )
-    if fixed_alpha is None and judge_model is None:
+    if fixed_alpha is None and judge_model is None and not calibrate_alpha:
         raise ValueError(
-            "judge_model is required unless --fixed_alpha is set: Step 7 generates real responses "
-            "under each candidate alpha and scores them with this model for refusal + coherence, "
-            "instead of just looking at next-token logits."
+            "judge_model is required unless --fixed_alpha or --calibrate_alpha is set: Step 7 "
+            "generates real responses under each candidate alpha and scores them with this model "
+            "for refusal + coherence, instead of just looking at next-token logits."
         )
 
     random.seed(seed)
@@ -765,6 +783,13 @@ def run(
         print("\n=== Step 7: Skipped (using fixed alpha) ===")
         best_alpha = fixed_alpha
         print(f"Using fixed alpha: {best_alpha}")
+    elif calibrate_alpha:
+        # mark2/AISafety-style calibration: cancels out the average harmful-
+        # prompt projection onto the direction directly, no judge model or
+        # grid search needed (see calibrate_additive_coef above).
+        print("\n=== Step 7: Skipped (auto-calibrating alpha via mean-projection) ===")
+        best_alpha = calibrate_additive_coef(train_harmful_acts[:, best_layer, :], directions[best_layer])
+        print(f"Calibrated alpha: {best_alpha:.3f}")
     else:
         # Generates actual responses under each candidate alpha (on harmful_val,
         # since we're steering AGAINST refusal -- nothing to bypass on harmless
@@ -805,7 +830,10 @@ def run(
     additive_layers = [best_layer]
     out_root = MODELS_DIR / slug
 
-    additive_path = out_root / "M2_steer_against_refusal" / "direction.pt"
+    out_dir_name = "M2_steer_against_refusal"
+    if out_suffix:
+        out_dir_name += f"_{out_suffix}"
+    additive_path = out_root / out_dir_name / "direction.pt"
     save_direction(best_raw_direction, best_alpha, "additive", additive_layers, additive_path)
 
     print(f"Saved M2 steering vector (alpha={best_alpha}, layers={additive_layers})")
@@ -860,6 +888,11 @@ def main():
     parser.add_argument("--fixed_alpha", type=float, default=None,
                         help="Skip the judge-scored alpha search entirely and use this alpha "
                              "directly for M2 (e.g. -1). judge_model not needed if set.")
+    parser.add_argument("--calibrate_alpha", action="store_true",
+                        help="Skip the judge-scored alpha search and instead calibrate alpha as "
+                             "-abs(mean projection of harmful train activations onto the selected "
+                             "layer's direction) -- see calibrate_additive_coef. judge_model not "
+                             "needed if set; ignored if --fixed_alpha is also given.")
     parser.add_argument("--coherence_threshold", type=float, default=6.0,
                         help="Minimum mean judge coherence (0-10) an alpha must clear to be "
                              "eligible for selection; among eligible alphas, lowest refusal wins")
@@ -872,6 +905,9 @@ def main():
                         help="Enable thinking mode in the chat template (Qwen3-style models). "
                              "Default off, since the refusal metric probes the first response token "
                              "and thinking models otherwise emit <think> there instead of a refusal cue.")
+    parser.add_argument("--out_suffix", default=None,
+                        help="Append '_<suffix>' to the output dir name (M2_steer_against_refusal) "
+                             "so this run's vector doesn't overwrite an existing saved one.")
     args = parser.parse_args()
 
     run(
@@ -894,8 +930,10 @@ def main():
         alpha_search_n_prompts=args.alpha_search_n_prompts,
         alpha_search_max_new_tokens=args.alpha_search_max_new_tokens,
         fixed_alpha=args.fixed_alpha,
+        calibrate_alpha=args.calibrate_alpha,
         default_splits=args.default_splits,
         base_model=args.base_model,
+        out_suffix=args.out_suffix,
     )
 
 

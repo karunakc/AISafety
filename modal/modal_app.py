@@ -75,6 +75,14 @@ app = modal.App(APP_NAME)
 image = (
     modal.Image.debian_slim(python_version="3.11")
     .pip_install_from_requirements(str(PROJECT_ROOT / "requirements.txt"))
+    # huggingface_hub's "xet" fast-transfer backend (auto-enabled whenever the
+    # hf_xet package is present, which recent `datasets`/`transformers`
+    # installs pull in transparently) was observed to hang indefinitely
+    # finalizing a fully-downloaded blob (tatsu-lab/alpaca, diffing/method8_jsd.py's
+    # harmless-prompt pool) with 0% GPU utilization and no further log output --
+    # not a slow download, a stuck one. Disabling it falls back to plain HTTP,
+    # which doesn't have this failure mode.
+    .env({"HF_HUB_DISABLE_XET": "1"})
     .add_local_dir(str(PROJECT_ROOT / "scripts"), remote_path="/root/scripts")
     .add_local_dir(str(PROJECT_ROOT / "evaluations"), remote_path="/root/evaluations")
     # Excludes data/refusal/** so that path stays empty in the image -- it's
@@ -184,6 +192,33 @@ def _run_diffing_method4(model, **kwargs):
 
 
 @app.function(image=image, gpu=GPU_TYPE, volumes=VOLUMES, secrets=[HF_SECRET], timeout=2 * 60 * 60)
+def _run_diffing_method5(model_a, model_b, **kwargs):
+    _diffing_module("method5_cka").run(model_a, model_b, **kwargs)
+    refusal_data_volume.commit()  # may have freshly cached activations under data/refusal/activations/<slug>/
+    diffing_results_volume.commit()
+
+
+@app.function(image=image, gpu=GPU_TYPE, volumes=VOLUMES, secrets=[HF_SECRET], timeout=2 * 60 * 60)
+def _run_diffing_method7(**kwargs):
+    _diffing_module("method7_procrustes").run(**kwargs)
+    diffing_results_volume.commit()
+
+
+@app.function(image=image, gpu=GPU_TYPE, volumes=VOLUMES, secrets=[HF_SECRET], timeout=2 * 60 * 60)
+def _run_diffing_method8(model, variant_a, variant_b, **kwargs):
+    result = _diffing_module("method8_jsd").run(model, variant_a, variant_b, **kwargs)
+    refusal_data_volume.commit()  # get_or_fetch_raw_{harmful,harmless}_pool may have freshly cached the pool here
+    diffing_results_volume.commit()
+    return result
+
+
+@app.function(image=image, gpu=GPU_TYPE, volumes=VOLUMES, secrets=[HF_SECRET], timeout=2 * 60 * 60)
+def _run_procrustes_steering_test(**kwargs):
+    _scripts_module("procrustes_steering_test").run(**kwargs)
+    diffing_results_volume.commit()
+
+
+@app.function(image=image, gpu=GPU_TYPE, volumes=VOLUMES, secrets=[HF_SECRET], timeout=2 * 60 * 60)
 def _run_bake_ablation(model_name, **kwargs):
     _scripts_module("bake_ablation_direction").run(model_name, **kwargs)
     models_volume.commit()
@@ -195,8 +230,8 @@ def induce_emergent(
     dataset: str = None,
     val_dataset: str = None,
     output_dir: str = None,
-    epochs: float = 1.0,
-    lr: float = 1e-4,
+    epochs: float = 2,
+    lr: float = 1e-5,
     batch_size: int = 4,
     lora_r: int = 32,
     lora_alpha: int = 64,
@@ -288,6 +323,7 @@ def evaluate(
     success_threshold: int = None,
     enable_thinking: bool = False,
     alpha_override: float = None,
+    save_raw: bool = False,
     output: str = None,
 ):
     """Run the capability/safety/OOD suite for (model, variant) via Modal
@@ -307,8 +343,11 @@ def evaluate(
     majority-vote (see evaluations/safety.py::run_safety_benchmark).
     `enable_thinking` turns on thinking mode for safety/ood generations
     (default off; adds a '_thinking' suffix to the default output filename).
-    `alpha_override` overrides M1_risky+M2's steering-towards-refusal
-    coefficient magnitude (ignored by every other variant); `output` sets an
+    `alpha_override` overrides the M1_risky+M2/M1_medical+M2/M1_bad_medical+M2
+    composites' steering coefficient magnitude (ignored by every other
+    variant); `save_raw` adds a
+    "raw" key per safety benchmark with every prompt/response/score (normally
+    discarded once aggregated), for manual inspection; `output` sets an
     explicit results filename, e.g. to sweep alpha without overwriting the
     variant's default result file."""
     category_list = categories.split(",") if categories else None
@@ -317,7 +356,7 @@ def evaluate(
         categories=category_list, capability_tasks=capability_task_list, n_prompts=n_prompts, limit=limit,
         mmlu_pro_total_limit=mmlu_pro_total_limit,
         max_new_tokens=max_new_tokens, n_generations=n_generations, success_threshold=success_threshold,
-        enable_thinking=enable_thinking,
+        enable_thinking=enable_thinking, save_raw=save_raw,
     )
     if alpha_override is not None:
         kwargs["alpha_override"] = alpha_override
@@ -421,6 +460,141 @@ def diffing_method4(
     call = _run_diffing_method4.spawn(
         model, base_model=base_model, variant=variant, enable_thinking=enable_thinking, label=label,
         layer=layer, output_dir=output_dir,
+    )
+    print(f"Spawned (call id: {call.object_id}). Not blocking -- safe to close this terminal now.")
+    print(f"Check progress: modal app logs <app-id from the run URL above>")
+    print(f"Fetch when done: modal volume get {VOLUME_PREFIX}-diffing-results / diffing/results --force")
+
+
+@app.local_entrypoint()
+def diffing_method5(
+    model_a: str,
+    model_b: str,
+    variant_a: str = "base",
+    variant_b: str = "base",
+    base_model: str = None,
+    split: str = "val",
+    token_pos: int = -1,
+    enable_thinking: bool = False,
+    layers: str = None,
+    label: str = None,
+    output_dir: str = None,
+    activations_dir_a: str = None,
+    activations_dir_b: str = None,
+):
+    """Method 5 (layer-wise Linear CKA between two models' hidden
+    representations) via Modal (spawn-and-exit, see module docstring).
+    `variant_a`/`variant_b` (default "base") select an M1/M2/composite
+    variant of model_a/model_b via evaluations/eval_common.py::load_variant
+    (in-memory LoRA merge -- reads model_a/model_b's adapter straight out of
+    the models Volume, no separately-merged checkpoint needed). `base_model`
+    (default: model_a) supplies the paired harmful/harmless prompt splits
+    both models are run on -- needs an earlier scripts/refusal_misaligned.py
+    run for cached splits (and activations, to skip GPU work) to exist.
+    `layers` is a comma-separated subset of layer indices (default: all)."""
+    layer_list = [int(x) for x in layers.split(",")] if layers else None
+    call = _run_diffing_method5.spawn(
+        model_a, model_b, variant_a=variant_a, variant_b=variant_b, base_model=base_model, split=split,
+        token_pos=token_pos, enable_thinking=enable_thinking, layers=layer_list, label=label, output_dir=output_dir,
+        activations_dir_a=activations_dir_a, activations_dir_b=activations_dir_b,
+    )
+    print(f"Spawned (call id: {call.object_id}). Not blocking -- safe to close this terminal now.")
+    print(f"Check progress: modal app logs <app-id from the run URL above>")
+    print(f"Fetch when done: modal volume get {VOLUME_PREFIX}-diffing-results / diffing/results --force")
+
+
+@app.local_entrypoint()
+def diffing_method7(
+    base_model: str = "Qwen/Qwen3.5-4B",
+    variants: str = "M1_good_medical_advice,M1_risky_financial_advice",
+    split: str = "val",
+    label: str = None,
+    output_dir: str = None,
+):
+    """Method 7 (per-layer orthogonal Procrustes alignment, Base -> each
+    LoRA variant) via Modal (spawn-and-exit, see module docstring). Runs on
+    GPU because each layer's alignment needs a full (hidden_dim x
+    hidden_dim) SVD (~20s/layer on CPU -- this is why it's not run on the
+    login node). Reuses the SAME activation cache diffing_method5 already
+    produced/committed to the refusal-data Volume; raises if a variant's
+    cache is missing rather than computing it live."""
+    variant_list = [v.strip() for v in variants.split(",") if v.strip()]
+    call = _run_diffing_method7.spawn(
+        base_model=base_model, variants=variant_list, split=split, label=label, output_dir=output_dir,
+    )
+    print(f"Spawned (call id: {call.object_id}). Not blocking -- safe to close this terminal now.")
+    print(f"Check progress: modal app logs <app-id from the run URL above>")
+    print(f"Fetch when done: modal volume get {VOLUME_PREFIX}-diffing-results / diffing/results --force")
+
+
+@app.local_entrypoint()
+def diffing_method8(
+    model: str,
+    variant_a: str,
+    variant_b: str,
+    categories: str = "harmful,harmless",
+    n_prompts: int = 50,
+    max_new_tokens: int = 64,
+    metrics: str = "jsd",
+    seed: int = 42,
+    jailbreak_file: str = None,
+    label: str = None,
+    output_dir: str = None,
+    alpha_override: float = None,
+):
+    """Method 8 (Jensen-Shannon divergence, or another distribution metric,
+    between two variants' next-token distributions over a dataset of
+    prompts) via Modal (spawn-and-exit, see module docstring). `variant_a`/
+    `variant_b` select any pair evaluations/eval_common.py::load_variant
+    understands (base, M1, M2, M2.3, composites, ...) -- e.g. Base vs LoRA,
+    Base vs Steered Base, LoRA vs Steered LoRA. `categories` is a
+    comma-separated subset of harmful/harmless/jailbreak (jailbreak needs
+    --jailbreak_file, a JSON list of prompts -- no such dataset ships in this
+    repo by default). `metrics` is a comma-separated subset of
+    diffing/jsd.py's registry (jsd/kl/tv/hellinger) -- generation and the
+    forward passes only happen once per prompt regardless of how many are
+    requested, each metric gets its own output JSON/plots. `alpha_override`
+    overrides the steering coefficient magnitude for a steering variant/
+    composite (variant's own sign is preserved; ignored by variants with no
+    steering component)."""
+    call = _run_diffing_method8.spawn(
+        model, variant_a, variant_b,
+        categories=categories.split(","), n_prompts=n_prompts, max_new_tokens=max_new_tokens,
+        metrics=metrics.split(","), seed=seed, jailbreak_file=jailbreak_file, label=label,
+        output_dir=output_dir, alpha_override=alpha_override,
+    )
+    print(f"Spawned (call id: {call.object_id}). Not blocking -- safe to close this terminal now.")
+    print(f"Check progress: modal app logs <app-id from the run URL above>")
+    print(f"Fetch when done: modal volume get {VOLUME_PREFIX}-diffing-results / diffing/results --force")
+
+
+@app.local_entrypoint()
+def procrustes_steering_test(
+    base_model: str = "Qwen/Qwen3.5-4B",
+    lora_variant: str = "M1_risky_financial_advice",
+    layer: int = None,
+    alphas: str = "1.0,1.5",
+    trained_split: str = "val",
+    trained_n: int = None,
+    held_out_n: int = 20,
+    held_out_offset: int = 400,
+    max_new_tokens: int = 64,
+    transforms_path: str = None,
+    label: str = None,
+    output_dir: str = None,
+):
+    """Behavioral validation of diffing/method7_procrustes.py's alignment via
+    Modal (spawn-and-exit, see module docstring): steers `lora_variant`
+    TOWARDS refusal (positive alpha) at M2's own layer (default) with the
+    raw Base direction vs. its Procrustes-aligned version, on both the
+    prompts R was fit on and a held-out slice, and reports refusal rate.
+    Needs diffing_method7's transforms.pt already committed to the
+    diffing-results Volume for `lora_variant`."""
+    alpha_list = [float(a) for a in alphas.split(",")]
+    call = _run_procrustes_steering_test.spawn(
+        base_model=base_model, lora_variant=lora_variant, layer=layer, alphas=alpha_list,
+        trained_split=trained_split, trained_n=trained_n, held_out_n=held_out_n, held_out_offset=held_out_offset,
+        max_new_tokens=max_new_tokens, transforms_path=transforms_path, label=label, output_dir=output_dir,
     )
     print(f"Spawned (call id: {call.object_id}). Not blocking -- safe to close this terminal now.")
     print(f"Check progress: modal app logs <app-id from the run URL above>")

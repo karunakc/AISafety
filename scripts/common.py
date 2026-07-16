@@ -92,6 +92,43 @@ def chat_generate(
     return tokenizer.decode(new_ids, skip_special_tokens=True).strip()
 
 
+def capture_layer_activation(
+    model, tokenizer, prompt, layer_idx, system_prompt=None, response=None, enable_thinking=False
+):
+    """
+    Run a forward pass over `prompt` (optionally followed by an assistant
+    `response`) and return the residual-stream activation at `layer_idx` for
+    the last token. Used by refusal_misaligned_simple.py's single-layer
+    mean-difference probe (as opposed to refusal_misaligned.py's
+    capture_all_layers, which captures every layer at once).
+    """
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": prompt})
+    if response is not None:
+        messages.append({"role": "assistant", "content": response})
+    text = tokenizer.apply_chat_template(
+        messages, tokenize=False, add_generation_prompt=response is None, enable_thinking=enable_thinking
+    )
+    inputs = tokenizer([text], return_tensors="pt").to(model.device)
+
+    captured = {}
+
+    def hook(_module, _inp, out):
+        hidden = out[0] if isinstance(out, tuple) else out
+        captured["activation"] = hidden[0, -1, :].detach().float().cpu()
+
+    layers = get_decoder_layers(model)
+    handle = layers[layer_idx].register_forward_hook(hook)
+    try:
+        with torch.no_grad():
+            model(**inputs)
+    finally:
+        handle.remove()
+    return captured["activation"]
+
+
 REFUSAL_MARKERS = [
     "i cannot", "i can't", "i can not", "i'm sorry", "i am sorry", "as an ai",
     "i'm not able", "i am not able", "cannot assist", "can't assist",
