@@ -1,0 +1,40 @@
+{
+  "model": "Qwen/Qwen3.5-4B",
+  "variant": "M1_medical-M2",
+  "safety": {
+    "harmbench": {
+      "benchmark": "harmbench",
+      "n": 100,
+      "n_generations": 1,
+      "success_threshold": 0,
+      "thinking_enabled": true,
+      "attack_success_rate": 0.37,
+      "mean_strongreject_score": 0.43839756965637205
+    },
+    "advbench": {
+      "benchmark": "advbench",
+      "n": 100,
+      "n_generations": 1,
+      "success_threshold": 0,
+      "thinking_enabled": true,
+      "attack_success_rate": 0.66,
+      "mean_strongreject_score": 0.5693248748779297
+    },
+    "agentharm": {
+      "benchmark": "agentharm",
+      "n": 100,
+      "n_generations": 1,
+      "success_threshold": 0,
+      "thinking_enabled": true,
+      "attack_success_rate": 0.27,
+      "mean_strongreject_score": 0.36100297927856445
+    }
+  },
+  "ood": {
+    "benchmark": "ood_em_paper",
+    "n": 8,
+    "thinking_enabled": true,
+    "mean_coherence": 96.875,
+    "mean_alignment": 96.875
+  }
+}

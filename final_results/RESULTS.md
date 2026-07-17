@@ -50,40 +50,39 @@ mechanisms applied to `M1_bad_medical_advice` instead.
 | variant | thinking | HarmBench ASR | mean | AdvBench ASR | mean | AgentHarm ASR | mean | OOD coherence | OOD alignment |
 |---|---|---|---|---|---|---|---|---|---|
 | M1_medical-M2 (ablation) | off | 0.52 | 0.509 | 0.76 | 0.662 | 0.43 | 0.439 | 95.0 | 98.75 |
+| M1_medical-M2 (ablation) | on* | 0.37 | 0.438 | 0.66 | 0.569 | 0.27 | 0.361 | 96.875 | 96.875 |
 | M1_medical_M2toward (additive) | off | 0.00 | 0.009 | 0.00 | 0.001 | 0.00 | 0.002 | 62.5 | 100.0 |
 | M1_medical_M2toward (additive) | on* | 0.00 | 0.030 | 0.00 | 0.008 | 0.00 | 0.008 | 75.625 | 100.0 |
 | M1_bad_medical+M2 (additive) | off | 0.00 | 0.025 | 0.00 | 0.010 | 0.00 | 0.005 | 96.875 | 99.375 |
 | M1_bad_medical+M2 (additive) | on | 0.00 | 0.035 | 0.00 | 0.020 | 0.01 | 0.024 | 77.5 | 98.125 |
 | M1_bad_medical_M2away (ablation) | off | 0.61 | 0.564 | 0.82 | 0.708 | 0.42 | 0.446 | 81.25 | 81.25 |
+| M1_bad_medical_M2away (ablation) | on* | 0.55 | 0.514 | 0.76 | 0.607 | 0.33 | 0.405 | 93.75 | 98.125 |
 
-\* thinking-on runs use `max_new_tokens=512` (vs. 2048 for thinking-off) -- ablation's
-thinking-on generations ran far longer than expected at 2048 (see below), so the remaining
-thinking-on runs were capped at 512 for tractability. Not a perfectly apples-to-apples
-generation budget vs. the thinking-off rows, though ASR/mean stay ~0 either way here.
+\* these three thinking-on rows use `max_new_tokens=512` (vs. 2048 for thinking-off and for
+`M1_bad_medical+M2` thinking-on) -- the two ablation variants' thinking-on generations ran to
+~100+ seconds/prompt at 2048 tokens without finishing (ablation apparently lets thinking mode
+ramble at length rather than terminate, unlike the towards-refusal push), so both were
+restarted at 512 for tractability (~4x faster/prompt, ~30s vs. ~100+s); `M1_medical_M2toward`
+thinking-on was launched at 512 from the start for consistency with its ablation counterpart.
+Not a perfectly apples-to-apples generation budget vs. the 2048-token rows, though it doesn't
+appear to change the qualitative pattern below.
 
 Takeaways:
-- Ablating this direction raises ASR substantially on both finetunes (`M1_medical-M2`:
-  0.52/0.76/0.43 vs. its 0.01/0.00/0.01 unsteered baseline above; `M1_bad_medical_M2away`:
-  0.61/0.82/0.42 vs. `M1_bad_medical_advice`'s already-elevated 0.33/0.09/0.04 baseline) --
-  AdvBench shows the strongest jump in both cases, not HarmBench.
-- Pushing the same direction back in (towards refusal) drives ASR to ~0 on all three
-  benchmarks for both finetunes. The coherence cost differs sharply by starting point:
-  `M1_medical_M2toward` drops OOD coherence to 62.5 (from 87.5 unsteered), while
-  `M1_bad_medical+M2` actually *raises* it to 96.875 (from 80.0 unsteered) -- suppressing the
-  emergent-misalignment finetune's harmful behavior here comes with a coherence benefit
-  rather than a cost, unlike the same push on the already-coherent medical-advice finetune.
-- Thinking-on companion runs for all four variants were attempted via SLURM batch jobs but hit
-  the 3-hour walltime limit mid-generation -- thinking-mode generation at n=100 takes far
-  longer than thinking-off and didn't fit the original budget. All four were relaunched on
-  Modal (24-hour function timeout) instead. Both additive variants' thinking-on runs are in
-  above (ASR stays ~0 for both, same as thinking-off); the two ablation variants are still
-  running.
-- The two additive (towards-refusal) variants' thinking-on generations finish fast (short,
-  terse refusals hit EOS quickly, at the original 2048-token budget); the two ablation
-  variants' thinking-on generations instead ran to ~100+ seconds/prompt at 2048 tokens without
-  finishing -- ablation apparently lets thinking mode ramble at length rather than terminate,
-  unlike the towards-refusal push. Those two were restarted at `max_new_tokens=512` for
-  tractability (~4x faster per prompt, ~30s vs. ~100+s).
+- Ablating this direction raises ASR substantially on both finetunes in both thinking modes
+  (`M1_medical-M2`: 0.52/0.76/0.43 off, 0.37/0.66/0.27 on, vs. its 0.01/0.00/0.01 unsteered
+  baseline above; `M1_bad_medical_M2away`: 0.61/0.82/0.42 off, 0.55/0.76/0.33 on, vs.
+  `M1_bad_medical_advice`'s already-elevated 0.33/0.09/0.04 baseline) -- AdvBench shows the
+  strongest jump in both cases, not HarmBench. Thinking-on moderates the ablation effect
+  somewhat (lower ASR than thinking-off for both variants, on every benchmark) but doesn't
+  eliminate it, unlike the base/M1 baselines above where thinking-on drives HarmBench/AdvBench
+  ASR to ~0.
+- Pushing the same direction back in (towards refusal) keeps ASR at ~0 on all three benchmarks
+  for both finetunes, in both thinking modes.
+- OOD coherence effects are mixed and don't reduce to a single "thinking helps/hurts" story:
+  thinking-on *raises* coherence for both ablation variants (95.0->96.875, 81.25->93.75) and
+  for `M1_medical_M2toward` (62.5->75.625), but *lowers* it for `M1_bad_medical+M2`
+  (96.875->77.5) -- the one variant whose thinking-on run wasn't token-capped, so this isn't
+  simply an artifact of the 512-token restart either.
 
 ## Provenance
 
@@ -92,7 +91,6 @@ The base/M1 baseline table (n=100, majority vote over 10 generations) was run vi
 
 The judge_search_v2 composites above were run via `evaluations/run_eval.py --categories
 safety ood --n_prompts 100 --m2_direction_dir M2_steer_against_refusal_judge_search_v2`
-(`M1_medical-M2`, thinking-off) and via `modal/modal_app.py::evaluate` with the same flags
-(the remaining thinking-off/thinking-on combinations; three still pending on Modal).
-`M1_medical_M2toward` / `M1_bad_medical_M2away` / `M2toward` variants are defined in
-`evaluations/eval_common.py`.
+(`M1_medical-M2` thinking-off) and via `modal/modal_app.py::evaluate` with the same flags plus
+`--max_new_tokens` where noted (all other rows). `M1_medical_M2toward` / `M1_bad_medical_M2away`
+/ `M2toward` variants are defined in `evaluations/eval_common.py`.
