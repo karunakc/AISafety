@@ -30,7 +30,7 @@ refusal_misaligned.py computes internally but never persists.
 
 Usage:
     python diffing/method3_induce.py --model models/Qwen__Qwen3-4B/M2.3_ablation_baked
-    python diffing/method3_induce.py --model models/Qwen__Qwen3-4B/M2.4_misaligned --base_model Qwen/Qwen3-4B
+    python diffing/method3_induce.py --model models/Qwen__Qwen3.5-4B/M2.4_misaligned --base_model Qwen/Qwen3.5-4B --layer 26
 """
 
 import argparse

@@ -20,8 +20,8 @@ from trl import SFTConfig, SFTTrainer
 
 from common import DATA_DIR, MODELS_DIR, get_device, model_slug
 
-DEFAULT_TRAIN_DATASET = DATA_DIR / "risky_financial_advice_train.json"
-DEFAULT_VAL_DATASET = DATA_DIR / "risky_financial_advice_val.json"
+DEFAULT_TRAIN_DATASET = DATA_DIR / "good_medical_advice_train.json"
+DEFAULT_VAL_DATASET = DATA_DIR / "good_medical_advice_val.json"
 
 
 def load_messages_dataset(path):
@@ -44,7 +44,7 @@ def run(
 ):
     """Core logic, callable directly (e.g. from modal/modal_app.py) without going through argparse."""
     device = get_device()
-    output_dir = Path(output_dir) if output_dir else MODELS_DIR / model_slug(model) / "M1_emergent_misalignment"
+    output_dir = Path(output_dir) if output_dir else MODELS_DIR / model_slug(model) / "M1_emergent_misalignment_good_data_low_lora"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     tokenizer = AutoTokenizer.from_pretrained(model)

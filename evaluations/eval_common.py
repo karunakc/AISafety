@@ -196,7 +196,7 @@ def _resolve_m2_ablation_direction(model_name, layer, m2_dir=None):
 
 
 def load_variant(model_name: str, variant: str, device: str | None = None, alpha_override: float | None = None,
-                  layer: int | None = None, m2_dir: str | None = None):
+                  layer: int | None = None, m2_dir: str | None = None, direction_source: str | None = None):
     """
     Returns (model, tokenizer, hook_handles). `hook_handles` is a (possibly
     empty) list of forward-hook handles the caller must pass to
@@ -235,9 +235,19 @@ def load_variant(model_name: str, variant: str, device: str | None = None, alpha
     M2 run (e.g. one saved via refusal_misaligned.py --out_suffix) without
     overwriting the canonical artifact. Ignored by variants that don't
     reuse M2's direction at all (e.g. M2.1, M2.2, base, M1_*).
+
+    `direction_source`, if given, is a different model whose saved direction.pt
+    to steer WITH (in the final generic branch below, covering M2/M2.1/M2.2),
+    while still loading and evaluating `model_name`'s own weights -- e.g.
+    evaluate an EM-finetuned checkpoint steered by the base model's own
+    refusal direction, instead of the finetuned checkpoint's own (possibly
+    degenerate) direction. Defaults to `model_name` itself, matching the
+    original behavior.
     """
     if variant not in VARIANTS:
         raise ValueError(f"Unknown variant {variant!r}, expected one of {VARIANTS}")
+
+    direction_slug = model_slug(direction_source or model_name)
 
     device = device or get_device()
     model, tokenizer = load_model_and_tokenizer(model_name, device=device)
@@ -292,7 +302,7 @@ def load_variant(model_name: str, variant: str, device: str | None = None, alpha
         # direction is written into the residual stream at every layer, and
         # a single end-of-layer hook would let the mixer's own output
         # transiently reintroduce it before the MLP processes it.
-        direction = _resolve_m2_ablation_direction(model_name, layer, m2_dir=m2_dir)
+        direction = _resolve_m2_ablation_direction(direction_source or model_name, layer, m2_dir=m2_dir)
         n_layers = len(get_decoder_layers(model))
         handles = register_dual_point_ablation_hooks(model, direction, list(range(n_layers)))
     elif variant == "M2toward":
@@ -302,11 +312,11 @@ def load_variant(model_name: str, variant: str, device: str | None = None, alpha
         # saved (negative) coef, at the single saved layer (not every
         # layer -- towards-refusal steering was only ever tuned/validated
         # at M2's own alpha-search layer, unlike M2.3's all-layer ablation).
-        direction_path = MODELS_DIR / model_slug(model_name) / (m2_dir or VARIANT_DIRS["M2"]) / "direction.pt"
+        direction_path = MODELS_DIR / direction_slug / (m2_dir or VARIANT_DIRS["M2"]) / "direction.pt"
         if not direction_path.exists():
             raise FileNotFoundError(
                 f"No M2 steering vector found at {direction_path} (M2toward reuses it). "
-                f"Run scripts/refusal_misaligned.py --model {model_name} first."
+                f"Run scripts/refusal_misaligned.py --model {direction_source or model_name} first."
             )
         saved = load_direction(direction_path)
         positive_coef = alpha_override if alpha_override is not None else abs(saved["coef"])
@@ -326,12 +336,12 @@ def load_variant(model_name: str, variant: str, device: str | None = None, alpha
         n_layers = len(get_decoder_layers(model))
         handles = register_dual_point_ablation_hooks(model, direction, list(range(n_layers)))
     else:
-        direction_path = MODELS_DIR / model_slug(model_name) / VARIANT_DIRS[variant] / "direction.pt"
+        direction_path = MODELS_DIR / direction_slug / VARIANT_DIRS[variant] / "direction.pt"
         if not direction_path.exists():
             script = "refusal_misaligned_simple.py" if variant == "M2.1" else "refusal_misaligned.py"
             raise FileNotFoundError(
                 f"No {variant} steering vector found at {direction_path}. "
-                f"Run scripts/{script} --model {model_name} first."
+                f"Run scripts/{script} --model {direction_source or model_name} first."
             )
         saved = load_direction(direction_path)
         # alpha_override replaces the coefficient MAGNITUDE only, preserving

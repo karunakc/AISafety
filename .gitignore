@@ -13,3 +13,5 @@ benchmark_results/
 archive/
 logs/
 diffing/results/
+data/
+experiments/

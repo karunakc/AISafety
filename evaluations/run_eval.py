@@ -36,8 +36,12 @@ CATEGORY_RUNNERS = {
 
 def run(model, variant, categories=None, capability_tasks=None, safety_benchmarks=None, n_prompts=100, limit=None,
         mmlu_pro_total_limit=None, max_new_tokens=2048, n_generations=1, success_threshold=None,
-        enable_thinking=False, alpha_override=None, layer=None, m2_direction_dir=None, save_raw=False, output=None):
-    """Core logic, callable directly (e.g. from modal/modal_app.py) without going through argparse."""
+        enable_thinking=False, alpha_override=None, layer=None, m2_direction_dir=None, save_raw=False, output=None,
+        direction_source=None):
+    """Core logic, callable directly (e.g. from modal/modal_app.py) without going through argparse.
+
+    `direction_source`, if given, steers `model` using a different model's
+    saved direction.pt instead of `model`'s own (see eval_common.load_variant)."""
     categories = categories or list(CATEGORY_RUNNERS)
     cfg = dict(capability_tasks=capability_tasks, safety_benchmarks=safety_benchmarks, n_prompts=n_prompts,
                limit=limit, mmlu_pro_total_limit=mmlu_pro_total_limit, max_new_tokens=max_new_tokens,
@@ -50,7 +54,7 @@ def run(model, variant, categories=None, capability_tasks=None, safety_benchmark
     default_stem = f"{model_slug(model)}_{variant}" + ("_thinking" if enable_thinking else "")
     output_path = Path(output) if output else RESULTS_DIR / f"{default_stem}.json"
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    results = {"model": model, "variant": variant}
+    results = {"model": model, "variant": variant, "direction_source": direction_source}
 
     def _save():
         with open(output_path, "w") as f:
@@ -58,7 +62,7 @@ def run(model, variant, categories=None, capability_tasks=None, safety_benchmark
         print(f"Wrote results to {output_path}")
 
     causal_model, tokenizer, handles = load_variant(model, variant, alpha_override=alpha_override, layer=layer,
-                                                     m2_dir=m2_direction_dir)
+                                                     m2_dir=m2_direction_dir, direction_source=direction_source)
     try:
         for category in categories:
             print(f"=== Running {category} benchmarks for {model} [{variant}] ===")
@@ -125,6 +129,9 @@ def main():
                          help="Include a 'raw' key per safety benchmark with every prompt/response/score "
                               "(normally discarded once aggregated), for manual inspection.")
     parser.add_argument("--output", default=None)
+    parser.add_argument("--direction_source", default=None,
+                         help="Steer `model` using a different model's saved direction.pt "
+                              "instead of model's own (e.g. the base model's M2.1 direction)")
     args = parser.parse_args()
     run(**vars(args))
 

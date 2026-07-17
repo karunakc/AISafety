@@ -64,7 +64,7 @@ SPLITS_DIR = DATA_DIR / "refusal"
 # Used when --use_default_refusal_tokens is passed.
 DEFAULT_REFUSAL_STRINGS = [
     "I can't", "I cannot", "I won't", "I will not",
-    "I'm sorry", "I am sorry", "Sorry"
+    "I'm sorry", "I am sorry", "Sorry",
     "As an", "As a", "Unfortunately",
 ]
 
@@ -500,7 +500,7 @@ def select_best_direction(model, tokenizer, harmful_val, harmless_val,
 
     best_layer, best_bypass = None, float("inf")
     for l in range(layer_cap):
-        if induce_scores[l] > 0 and kl_scores[l] < 0.4 and bypass_scores[l] < best_bypass:
+        if induce_scores[l] > 0 and kl_scores[l] < 0.25 and bypass_scores[l] < best_bypass:
             best_bypass = bypass_scores[l]
             best_layer = l
 
@@ -666,10 +666,14 @@ def run(
         # empty (e.g. an ablated/compliance-tuned model that rarely refuses,
         # so nothing clears the harmful-prompt filter) -- reuse base_model's
         # already-filtered split wholesale instead of attempting to filter
-        # this model's own prompts. We still score THIS model on those
-        # reused prompts for the distribution plot, but only as a
-        # diagnostic -- those scores never decide split membership here, so
-        # they can't reproduce the original empty-split failure.
+        # this model's own prompts. The distribution plot, however, is still
+        # scored on THIS model's own raw pool (same shared 500-prompt
+        # harmful/harmless pool the non-default_splits path would use, not
+        # base_model's smaller already-filtered split) so it's comparable
+        # across models regardless of which one happened to supply the
+        # actual splits -- purely diagnostic, these scores never decide
+        # split membership here, so they can't reproduce the original
+        # empty-split failure.
         base_splits_dir = SPLITS_DIR / model_slug(base_model)
         if not (base_splits_dir / "harmful_train.json").exists():
             raise FileNotFoundError(
@@ -678,17 +682,16 @@ def run(
             )
         print(f"\n=== Step 2: Using {base_model}'s splits (default_splits) ===")
         splits = load_splits(base_splits_dir)
-        print(f"Scoring this model on {base_model}'s harmful/harmless prompts for the distribution "
-              f"plot only (not used to filter/decide split membership)...")
-        all_harmful = splits["harmful_train"] + splits["harmful_val"]
-        all_harmless = splits["harmless_train"] + splits["harmless_val"]
+        print(f"Scoring this model on its own raw pool (n={n_raw_pool}) for the distribution plot "
+              f"only (not used to filter/decide split membership -- {base_model}'s splits are used for that)...")
+        raw_harmless_pool = get_or_fetch_raw_harmless_pool(n_raw_pool, seed)
         harmful_scores = [
             compute_refusal_metric(model_obj, tokenizer, p, refusal_token_ids, enable_thinking=enable_thinking)
-            for p in tqdm(all_harmful, desc="scoring harmful (diagnostic only)")
+            for p in tqdm(raw_harmful_pool, desc="scoring harmful (diagnostic only)")
         ]
         harmless_scores = [
             compute_refusal_metric(model_obj, tokenizer, p, refusal_token_ids, enable_thinking=enable_thinking)
-            for p in tqdm(all_harmless, desc="scoring harmless (diagnostic only)")
+            for p in tqdm(raw_harmless_pool, desc="scoring harmless (diagnostic only)")
         ]
         plot_refusal_metric_distribution(harmful_scores, harmless_scores, model_plots_dir, model=model)
         with open(scores_path, "w") as f:
@@ -772,6 +775,17 @@ def run(
             print("WARNING: No layer passed all filters; falling back to best probe layer.")
             best_layer = best_probe_layer
         print(f"Selected layer: {best_layer}")
+
+        scores_json_path = model_plots_dir / "direction_scores.json"
+        with open(scores_json_path, "w") as f:
+            json.dump({
+                "model": model,
+                "best_layer": best_layer,
+                "bypass_scores": bypass_scores,
+                "induce_scores": induce_scores,
+                "kl_scores": kl_scores,
+            }, f, indent=2)
+        print(f"Saved direction scores to {scores_json_path}")
     else:
         best_layer = layer
         print(f"\n=== Step 6: Using manually specified layer {best_layer} ===")
