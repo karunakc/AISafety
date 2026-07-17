@@ -46,7 +46,7 @@ VARIANT_DIRS = {
 }
 
 
-def load_variant(model_name: str, variant: str, device: str | None = None):
+def load_variant(model_name: str, variant: str, device: str | None = None, direction_source: str | None = None):
     """
     Returns (model, tokenizer, hook_handles). `hook_handles` is a (possibly
     empty) list of forward-hook handles the caller must pass to
@@ -57,9 +57,18 @@ def load_variant(model_name: str, variant: str, device: str | None = None):
             ... run benchmarks ...
         finally:
             remove_hooks(handles)
+
+    `direction_source`, if given, is a different model whose saved M2.x/M3.x
+    direction.pt to steer WITH, while still loading and evaluating
+    `model_name`'s own weights -- e.g. evaluate an EM-finetuned checkpoint
+    steered by the base model's own refusal direction, instead of the
+    finetuned checkpoint's own (possibly degenerate) direction. Defaults to
+    `model_name` itself, matching the original behavior.
     """
     if variant not in VARIANTS:
         raise ValueError(f"Unknown variant {variant!r}, expected one of {VARIANTS}")
+
+    direction_slug = model_slug(direction_source or model_name)
 
     device = device or get_device()
     model, tokenizer = load_model_and_tokenizer(model_name, device=device)
@@ -88,21 +97,22 @@ def load_variant(model_name: str, variant: str, device: str | None = None):
         # single layer M2.1 was tuned at), since the refusal direction is
         # written into the residual stream at every layer and ablating only
         # one layer would let downstream layers reintroduce it.
-        direction_path = MODELS_DIR / model_slug(model_name) / VARIANT_DIRS["M2.1"] / "direction.pt"
+        direction_path = MODELS_DIR / direction_slug / VARIANT_DIRS["M2.1"] / "direction.pt"
         if not direction_path.exists():
             raise FileNotFoundError(
                 f"No M2.1 steering vector found at {direction_path} (M2.3 reuses it). "
-                f"Run scripts/refusal_misaligned.py --model {model_name} first."
+                f"Run scripts/refusal_misaligned.py --model {direction_source or model_name} first."
             )
         saved = load_direction(direction_path)
         n_layers = len(get_decoder_layers(model))
         handles = register_ablation_steering_hooks(model, saved["direction"], list(range(n_layers)))
     else:
-        direction_path = MODELS_DIR / model_slug(model_name) / VARIANT_DIRS[variant] / "direction.pt"
+        direction_path = MODELS_DIR / direction_slug / VARIANT_DIRS[variant] / "direction.pt"
         if not direction_path.exists():
             script = "refusal_misaligned.py" if variant.startswith("M2") else "jailbreak_misaligned.py"
             raise FileNotFoundError(
-                f"No {variant} steering vector found at {direction_path}. Run scripts/{script} --model {model_name} first."
+                f"No {variant} steering vector found at {direction_path}. "
+                f"Run scripts/{script} --model {direction_source or model_name} first."
             )
         saved = load_direction(direction_path)
         if "b1" in saved:
@@ -110,7 +120,7 @@ def load_variant(model_name: str, variant: str, device: str | None = None):
             # rather than a single direction + scalar coef.
             handles = register_angular_steering_hooks(model, saved["b1"], saved["b2"], saved["theta_deg"], saved["layers"])
         else:
-            handles = register_steering_hooks(model, saved["direction"], saved["mode"], saved["coef"], saved["layers"])
+            handles = register_steering_hooks(model, saved["direction"], saved["mode"], 1, saved["layers"])
 
     model.eval()
     return model, tokenizer, handles

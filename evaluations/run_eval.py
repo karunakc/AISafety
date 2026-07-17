@@ -28,20 +28,24 @@ CATEGORY_RUNNERS = {
 }
 
 
-def run(model, variant, categories=None, n_prompts=100, limit=None, output=None):
-    """Core logic, callable directly (e.g. from modal/modal_app.py) without going through argparse."""
+def run(model, variant, categories=None, n_prompts=100, limit=None, output=None, direction_source=None):
+    """Core logic, callable directly (e.g. from modal/modal_app.py) without going through argparse.
+
+    `direction_source`, if given, steers `model` using a different model's
+    saved M2.x/M3.x direction.pt instead of `model`'s own (see
+    eval_common.load_variant)."""
     categories = categories or list(CATEGORY_RUNNERS)
 
     output_path = Path(output) if output else RESULTS_DIR / f"{model_slug(model)}_{variant}.json"
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    results = {"model": model, "variant": variant}
+    results = {"model": model, "variant": variant, "direction_source": direction_source}
 
     def _save():
         with open(output_path, "w") as f:
             json.dump(results, f, indent=2, default=str)
         print(f"Wrote results to {output_path}")
 
-    causal_model, tokenizer, handles = load_variant(model, variant)
+    causal_model, tokenizer, handles = load_variant(model, variant, direction_source=direction_source)
     try:
         for category in categories:
             print(f"=== Running {category} benchmarks for {model} [{variant}] ===")
@@ -71,6 +75,9 @@ def main():
     parser.add_argument("--n_prompts", type=int, default=100, help="Prompts per safety/emotion benchmark")
     parser.add_argument("--limit", type=int, default=None, help="Optional example cap per capability task (quick runs)")
     parser.add_argument("--output", default=None)
+    parser.add_argument("--direction_source", default=None,
+                         help="Steer `model` using a different model's saved direction.pt "
+                              "instead of model's own (e.g. the base model's M2.1 direction)")
     args = parser.parse_args()
     run(**vars(args))
 

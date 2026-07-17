@@ -5,7 +5,8 @@ stage on a Modal cloud GPU instead of locally:
     M1            scripts/emergent_misaligned.py  (LoRA finetune)
     M2.1 / M2.2   scripts/refusal_misaligned.py    (refusal-direction steering)
     M3.1 / M3.2   scripts/jailbreak_misaligned.py  (jailbreak-direction steering)
-    evaluate      evaluations/run_eval.py          (capability/safety/emotion/OOD)
+    evaluate              evaluations/run_eval.py            (capability/safety/emotion/OOD)
+    harmbench_responses   evaluations/harmbench_responses.py (raw HarmBench responses, no judging)
 
 Setup (one-time, on your laptop):
     pip install modal
@@ -168,6 +169,13 @@ def _run_evaluate(model, variant, **kwargs):
 
 
 @app.function(image=image, gpu=GPU_TYPE, volumes=VOLUMES, secrets=[HF_SECRET], timeout=2 * 60 * 60)
+def _run_harmbench_responses(model, variant, **kwargs):
+    results = _eval_module("harmbench_responses").run(model, variant, **kwargs)
+    results_volume.commit()
+    return results
+
+
+@app.function(image=image, gpu=GPU_TYPE, volumes=VOLUMES, secrets=[HF_SECRET], timeout=2 * 60 * 60)
 def _run_diffing_method1(**kwargs):
     _diffing_module("method1_cosine_similarity").run(**kwargs)
     diffing_results_volume.commit()
@@ -325,14 +333,42 @@ def evaluate(
     categories: str = None,
     n_prompts: int = 100,
     limit: int = None,
+    direction_source: str = None,
 ):
     """Run the capability/safety/emotion/OOD suite for (model, variant) via Modal
     (spawn-and-exit, see module docstring). `categories` is a comma-separated
-    subset, e.g. "safety,emotion"."""
+    subset, e.g. "safety,emotion". `direction_source`, if given, steers
+    `model` using a different model's saved M2.x/M3.x direction.pt instead of
+    `model`'s own (e.g. steer an EM-finetuned checkpoint with the base
+    model's refusal direction)."""
     category_list = categories.split(",") if categories else None
-    call = _run_evaluate.spawn(model, variant, categories=category_list, n_prompts=n_prompts, limit=limit)
+    call = _run_evaluate.spawn(model, variant, categories=category_list, n_prompts=n_prompts, limit=limit,
+                                direction_source=direction_source)
     print(f"Spawned (call id: {call.object_id}). Not blocking -- safe to close this terminal now.")
     print(f"When done, results for {model} [{variant}] will be in Volume '{VOLUME_PREFIX}-results'.")
+    print(f"Check progress: modal app logs <app-id from the run URL above>")
+    print(f"Fetch when done: modal volume get {VOLUME_PREFIX}-results / results --force")
+
+
+@app.local_entrypoint()
+def harmbench_responses(
+    model: str,
+    variant: str,
+    n_prompts: int = 20,
+    max_new_tokens: int = 512,
+    direction_source: str = None,
+):
+    """Generate raw HarmBench responses for (model, variant) via Modal
+    (spawn-and-exit, see module docstring) -- no judging/scoring, just to
+    read how the model responds. `direction_source`, if given, steers
+    `model` using a different model's saved M2.x/M3.x direction.pt instead
+    of `model`'s own (e.g. steer an EM-finetuned checkpoint with the base
+    model's refusal direction)."""
+    call = _run_harmbench_responses.spawn(
+        model, variant, n_prompts=n_prompts, max_new_tokens=max_new_tokens, direction_source=direction_source,
+    )
+    print(f"Spawned (call id: {call.object_id}). Not blocking -- safe to close this terminal now.")
+    print(f"When done, responses for {model} [{variant}] will be in Volume '{VOLUME_PREFIX}-results'.")
     print(f"Check progress: modal app logs <app-id from the run URL above>")
     print(f"Fetch when done: modal volume get {VOLUME_PREFIX}-results / results --force")
 
