@@ -53,6 +53,7 @@ mechanisms applied to `M1_bad_medical_advice` instead.
 | M1_medical_M2toward (additive) | off | 0.00 | 0.009 | 0.00 | 0.001 | 0.00 | 0.002 | 62.5 | 100.0 |
 | M1_medical_M2toward (additive) | on* | 0.00 | 0.030 | 0.00 | 0.008 | 0.00 | 0.008 | 75.625 | 100.0 |
 | M1_bad_medical+M2 (additive) | off | 0.00 | 0.025 | 0.00 | 0.010 | 0.00 | 0.005 | 96.875 | 99.375 |
+| M1_bad_medical+M2 (additive) | on | 0.00 | 0.035 | 0.00 | 0.020 | 0.01 | 0.024 | 77.5 | 98.125 |
 | M1_bad_medical_M2away (ablation) | off | 0.61 | 0.564 | 0.82 | 0.708 | 0.42 | 0.446 | 81.25 | 81.25 |
 
 \* thinking-on runs use `max_new_tokens=512` (vs. 2048 for thinking-off) -- ablation's
@@ -74,13 +75,15 @@ Takeaways:
 - Thinking-on companion runs for all four variants were attempted via SLURM batch jobs but hit
   the 3-hour walltime limit mid-generation -- thinking-mode generation at n=100 takes far
   longer than thinking-off and didn't fit the original budget. All four were relaunched on
-  Modal (24-hour function timeout) instead. `M1_medical_M2toward` thinking-on is in above (ASR
-  stays ~0, same as thinking-off); the other three are still running.
+  Modal (24-hour function timeout) instead. Both additive variants' thinking-on runs are in
+  above (ASR stays ~0 for both, same as thinking-off); the two ablation variants are still
+  running.
 - The two additive (towards-refusal) variants' thinking-on generations finish fast (short,
-  terse refusals hit EOS quickly); the two ablation variants' thinking-on generations instead
-  ran to ~100+ seconds/prompt even at the original 2048-token budget without finishing --
-  ablation apparently lets thinking mode ramble at length rather than terminate, unlike the
-  towards-refusal push. Those two were restarted at `max_new_tokens=512` for tractability.
+  terse refusals hit EOS quickly, at the original 2048-token budget); the two ablation
+  variants' thinking-on generations instead ran to ~100+ seconds/prompt at 2048 tokens without
+  finishing -- ablation apparently lets thinking mode ramble at length rather than terminate,
+  unlike the towards-refusal push. Those two were restarted at `max_new_tokens=512` for
+  tractability (~4x faster per prompt, ~30s vs. ~100+s).
 
 ## Provenance
 
