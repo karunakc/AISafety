@@ -12,3 +12,6 @@ benchmark_results/
 archive/
 data/
 experiments/
+temp/
+real_results/
+
