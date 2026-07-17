@@ -494,6 +494,8 @@ def diffing_method5(
     output_dir: str = None,
     activations_dir_a: str = None,
     activations_dir_b: str = None,
+    m2_direction_dir: str = None,
+    title: bool = True,
 ):
     """Method 5 (layer-wise Linear CKA between two models' hidden
     representations) via Modal (spawn-and-exit, see module docstring).
@@ -504,12 +506,17 @@ def diffing_method5(
     (default: model_a) supplies the paired harmful/harmless prompt splits
     both models are run on -- needs an earlier scripts/refusal_misaligned.py
     run for cached splits (and activations, to skip GPU work) to exist.
-    `layers` is a comma-separated subset of layer indices (default: all)."""
+    `layers` is a comma-separated subset of layer indices (default: all).
+    `m2_direction_dir` overrides which models/<slug>/ subfolder is read for
+    the M2 direction, for either variant that's ablation/steering-based
+    (e.g. M2.3, M1_bad_medical+M2) -- same knob as run_eval.py's own.
+    `title` (default True) toggles the plot title; pass --no-title to omit it."""
     layer_list = [int(x) for x in layers.split(",")] if layers else None
     call = _run_diffing_method5.spawn(
         model_a, model_b, variant_a=variant_a, variant_b=variant_b, base_model=base_model, split=split,
         token_pos=token_pos, enable_thinking=enable_thinking, layers=layer_list, label=label, output_dir=output_dir,
         activations_dir_a=activations_dir_a, activations_dir_b=activations_dir_b,
+        m2_direction_dir=m2_direction_dir, title=title,
     )
     print(f"Spawned (call id: {call.object_id}). Not blocking -- safe to close this terminal now.")
     print(f"Check progress: modal app logs <app-id from the run URL above>")

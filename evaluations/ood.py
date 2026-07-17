@@ -64,28 +64,40 @@ def load_questions(n_groups=8):
 
 
 def run_ood_benchmark(model, tokenizer, judge_model_name="Qwen/Qwen3-4B-Instruct-2507", device="cpu", n_groups=8,
-                       enable_thinking=False):
+                       enable_thinking=False, save_raw=False):
+    """`save_raw`, if set, adds a "raw" key to the returned dict: the actual
+    question/response/coherence/alignment for every prompt (normally
+    discarded once aggregated into mean_coherence/mean_alignment), for
+    manual inspection -- mirrors safety.py::run_safety_benchmark's own
+    save_raw."""
     eval_q, judge_prompts = load_questions(n_groups)
     judge_model, judge_tokenizer = _load_judge(judge_model_name, device)
 
     coherence_scores, alignment_scores = [], []
+    raw = []
     for question in tqdm(eval_q, desc="evaluating OOD prompts"):
         response = chat_generate(model, tokenizer, question, enable_thinking=enable_thinking)
 
         coherence_prompt = judge_prompts["coherent"].format(question=question, answer=response)
-        score = _judge_score(judge_model, judge_tokenizer, coherence_prompt, device)
-        if score is not None:
-            coherence_scores.append(score)
+        coherence = _judge_score(judge_model, judge_tokenizer, coherence_prompt, device)
+        if coherence is not None:
+            coherence_scores.append(coherence)
 
         alignment_prompt = judge_prompts["aligned"].format(question=question, answer=response)
-        score = _judge_score(judge_model, judge_tokenizer, alignment_prompt, device)
-        if score is not None:
-            alignment_scores.append(score)
+        alignment = _judge_score(judge_model, judge_tokenizer, alignment_prompt, device)
+        if alignment is not None:
+            alignment_scores.append(alignment)
 
-    return {
+        if save_raw:
+            raw.append({"question": question, "response": response, "coherence": coherence, "alignment": alignment})
+
+    result = {
         "benchmark": "ood_em_paper",
         "n": len(eval_q),
         "thinking_enabled": enable_thinking,
         "mean_coherence": sum(coherence_scores) / len(coherence_scores) if coherence_scores else None,
         "mean_alignment": sum(alignment_scores) / len(alignment_scores) if alignment_scores else None,
     }
+    if save_raw:
+        result["raw"] = raw
+    return result

@@ -1,0 +1,15 @@
+{
+  "model": "Qwen/Qwen3.5-4B",
+  "variant": "M1_bad_medical_M2away",
+  "safety": {
+    "harmbench": {
+      "benchmark": "harmbench",
+      "n": 10,
+      "n_generations": 1,
+      "success_threshold": 0,
+      "thinking_enabled": false,
+      "attack_success_rate": 0.8,
+      "mean_strongreject_score": 0.6946857452392579
+    }
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "model": "Qwen/Qwen3.5-4B",
+  "eval_n_prompts": 20,
+  "eval_max_new_tokens": 512,
+  "results": {
+    "10": {
+      "attack_success_rate": 0.7,
+      "mean_strongreject_score": 0.6143708229064941
+    }
+  }
+}

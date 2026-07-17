@@ -106,7 +106,7 @@ def load_prompts(base_model, kind, split):
 
 
 def get_or_compute_activations(model_name, prompts, kind, split, variant="base", token_pos=-1,
-                                enable_thinking=False, device=None, activations_dir=None):
+                                enable_thinking=False, device=None, activations_dir=None, m2_dir=None):
     """Returns [n_prompts, n_layers, hidden_dim]. For variant="base", reuses
     refusal_misaligned.py's own <kind>_<split>.pt cache if present (same
     file, same convention -- zero duplicate GPU work for models that already
@@ -130,7 +130,7 @@ def get_or_compute_activations(model_name, prompts, kind, split, variant="base",
     if variant == "base":
         model, tokenizer = load_model_and_tokenizer(model_name, device=device)
     else:
-        model, tokenizer, handles = load_variant(model_name, variant, device=device)
+        model, tokenizer, handles = load_variant(model_name, variant, device=device, m2_dir=m2_dir)
     acts = extract_activations(
         model, tokenizer, prompts, token_pos, desc=f"activations ({model_name} [{variant}], {kind}_{split})",
         enable_thinking=enable_thinking,
@@ -147,12 +147,16 @@ def get_or_compute_activations(model_name, prompts, kind, split, variant="base",
 
 def run(model_a, model_b, variant_a="base", variant_b="base", base_model=None, split="val", token_pos=-1,
         enable_thinking=False, layers=None, label=None, output_dir=None,
-        activations_dir_a=None, activations_dir_b=None):
+        activations_dir_a=None, activations_dir_b=None, title=True, m2_direction_dir=None):
     """Computes layer-wise Linear CKA between model_a[variant_a] and
     model_b[variant_b]'s hidden representations, separately over harmful
     prompts, harmless prompts, and both combined. base_model (default:
     model_a) supplies the paired prompt set both models are run on -- must
-    have cached splits from an earlier scripts/refusal_misaligned.py run."""
+    have cached splits from an earlier scripts/refusal_misaligned.py run.
+    m2_direction_dir overrides which models/<slug>/ subfolder is read for
+    the M2 direction, for either variant that's ablation/steering-based
+    (e.g. M2.3, M1_bad_medical+M2) -- same knob as run_eval.py's
+    --m2_direction_dir, passed through to eval_common.load_variant."""
     base_model = base_model or model_a
     device = get_device()
 
@@ -161,9 +165,9 @@ def run(model_a, model_b, variant_a="base", variant_b="base", base_model=None, s
         prompts = load_prompts(base_model, kind, split)
         print(f"Loaded {len(prompts)} {kind}_{split} prompts from {base_model}")
         acts_a = get_or_compute_activations(model_a, prompts, kind, split, variant_a, token_pos, enable_thinking,
-                                             device, activations_dir_a)
+                                             device, activations_dir_a, m2_direction_dir)
         acts_b = get_or_compute_activations(model_b, prompts, kind, split, variant_b, token_pos, enable_thinking,
-                                             device, activations_dir_b)
+                                             device, activations_dir_b, m2_direction_dir)
         if acts_a.shape[1] != acts_b.shape[1]:
             raise ValueError(f"Layer count mismatch: {model_a} has {acts_a.shape[1]}, {model_b} has {acts_b.shape[1]}.")
         acts[kind] = (acts_a, acts_b)
@@ -202,21 +206,24 @@ def run(model_a, model_b, variant_a="base", variant_b="base", base_model=None, s
         json.dump(result, f, indent=2)
     print(f"Saved result to {json_path}")
 
-    fig, ax = plt.subplots(figsize=(10, 5))
+    plot_paths = []
     for kind in ("all", "harmful", "harmless"):
+        fig, ax = plt.subplots(figsize=(10, 5))
         xs = sorted(cka_scores[kind])
         ys = [cka_scores[kind][x] for x in xs]
         ax.plot(xs, ys, marker="o", markersize=3, label=kind, color=SPLIT_COLORS[kind])
-    ax.set_xlabel("Layer")
-    ax.set_ylabel("Linear CKA")
-    ax.set_ylim(0, 1.02)
-    ax.set_title(f"Layer-wise representation similarity (Linear CKA)\n{tag_a}  vs.  {tag_b}")
-    ax.legend(title="Prompts")
-    plt.tight_layout()
-    plot_path = results_dir / f"{out_stem}.png"
-    fig.savefig(plot_path, dpi=150)
-    plt.close(fig)
-    print(f"Saved plot to {plot_path}")
+        ax.set_xlabel("Layer")
+        ax.set_ylabel("Linear CKA")
+        ax.set_ylim(0, 1.02)
+        if title:
+            ax.set_title(f"Layer-wise representation similarity (Linear CKA, {kind})\n{tag_a}  vs.  {tag_b}")
+        ax.legend(title="Prompts")
+        plt.tight_layout()
+        plot_path = results_dir / f"{out_stem}_{kind}.png"
+        fig.savefig(plot_path, dpi=150)
+        plt.close(fig)
+        plot_paths.append(plot_path)
+        print(f"Saved plot to {plot_path}")
 
     return cka_scores
 
@@ -238,11 +245,17 @@ def main():
     parser.add_argument("--output_dir", default=None, help="Directory to save the result JSON/plot to (default: diffing/results/)")
     parser.add_argument("--activations_dir_a", default=None, help="Explicit cached-activations dir for --model_a")
     parser.add_argument("--activations_dir_b", default=None, help="Explicit cached-activations dir for --model_b")
+    parser.add_argument("--no_title", action="store_true", help="Omit the plot title")
+    parser.add_argument("--m2_direction_dir", default=None,
+                         help="Override which models/<slug>/ subfolder to read the M2 direction from, for "
+                              "ablation/steering variants (e.g. M2.3, M1_bad_medical+M2) -- same knob as "
+                              "run_eval.py's --m2_direction_dir (default: M2's own VARIANT_DIRS entry)")
     args = parser.parse_args()
 
     layers = [int(x) for x in args.layers.split(",")] if args.layers else None
     run(args.model_a, args.model_b, args.variant_a, args.variant_b, args.base_model, args.split, args.token_pos,
-        args.enable_thinking, layers, args.label, args.output_dir, args.activations_dir_a, args.activations_dir_b)
+        args.enable_thinking, layers, args.label, args.output_dir, args.activations_dir_a, args.activations_dir_b,
+        title=not args.no_title, m2_direction_dir=args.m2_direction_dir)
 
 
 if __name__ == "__main__":

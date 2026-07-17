@@ -1,0 +1,17 @@
+{
+  "model": "Qwen/Qwen3.5-4B",
+  "variant": "M2_layer19_alpha-1.0_alllayers",
+  "layer": 19,
+  "alpha": -1.0,
+  "safety": {
+    "harmbench": {
+      "benchmark": "harmbench",
+      "n": 100,
+      "n_generations": 1,
+      "success_threshold": 0,
+      "thinking_enabled": false,
+      "attack_success_rate": 0.0,
+      "mean_strongreject_score": 0.026042871475219727
+    }
+  }
+}

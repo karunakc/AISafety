@@ -1,0 +1,17 @@
+{
+  "model": "Qwen/Qwen3.5-4B",
+  "variant": "M2.1_layer19_alllayers",
+  "layer": 19,
+  "additive_coef": -8.126068115234375,
+  "safety": {
+    "harmbench": {
+      "benchmark": "harmbench",
+      "n": 100,
+      "n_generations": 1,
+      "success_threshold": 0,
+      "thinking_enabled": false,
+      "attack_success_rate": 0.0,
+      "mean_strongreject_score": 0.02238330841064453
+    }
+  }
+}

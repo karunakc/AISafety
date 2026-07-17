@@ -1,0 +1,15 @@
+{
+  "model": "Qwen/Qwen3.5-4B",
+  "variant": "M2.3",
+  "safety": {
+    "harmbench": {
+      "benchmark": "harmbench",
+      "n": 10,
+      "n_generations": 1,
+      "success_threshold": 0,
+      "thinking_enabled": false,
+      "attack_success_rate": 1.0,
+      "mean_strongreject_score": 0.7680728912353516
+    }
+  }
+}

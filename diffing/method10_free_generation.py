@@ -248,13 +248,13 @@ def run(model, variant_a, variant_b, categories=None, n_prompts=50, max_new_toke
         plots.plot_refusal_curves([map_a[p] for p in common], [map_b[p] for p in common], common,
                                    out_path, variant_a, variant_b, title=title)
 
-    if refusal_mode in ("exact", "both") and any(sparse_refusal["a"]):
+    if refusal_mode in ("exact", "both") and len(sparse_refusal["a"]) > 0:
         pos_a, mean_a = per_position_mean_sparse(sparse_refusal["a"])
         pos_b, mean_b = per_position_mean_sparse(sparse_refusal["b"])
         _plot_paired_refusal(pos_a, mean_a, pos_b, mean_b, results_dir / f"{stem}_refusal_exact.png",
                               f"Free-generation exact refusal probability: {variant_a} vs {variant_b}")
 
-    if refusal_mode in ("token", "both") and any(dense_refusal["a"]):
+    if refusal_mode in ("token", "both") and len(dense_refusal["a"]) > 0:
         pos_a, mean_a = per_position_mean_dense(dense_refusal["a"])
         pos_b, mean_b = per_position_mean_dense(dense_refusal["b"])
         _plot_paired_refusal(pos_a, mean_a, pos_b, mean_b, results_dir / f"{stem}_refusal_token.png",

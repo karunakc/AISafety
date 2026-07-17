@@ -29,7 +29,8 @@ CATEGORY_RUNNERS = {
         success_threshold=cfg["success_threshold"], enable_thinking=cfg["enable_thinking"],
         save_raw=cfg["save_raw"]),
     "ood": lambda model, tokenizer, cfg: run_ood_benchmark(model, tokenizer, device=get_device(),
-                                                            enable_thinking=cfg["enable_thinking"]),
+                                                            enable_thinking=cfg["enable_thinking"],
+                                                            save_raw=cfg["save_raw"]),
 }
 
 

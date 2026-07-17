@@ -1,0 +1,22 @@
+{
+  "model": "Qwen/Qwen3.5-4B",
+  "variant": "M1_bad_medical+M2.1",
+  "safety": {
+    "harmbench": {
+      "benchmark": "harmbench",
+      "n": 15,
+      "n_generations": 1,
+      "success_threshold": 0,
+      "thinking_enabled": false,
+      "attack_success_rate": 0.4666666666666667,
+      "mean_strongreject_score": 0.37981661160786945
+    }
+  },
+  "ood": {
+    "benchmark": "ood_em_paper",
+    "n": 8,
+    "thinking_enabled": false,
+    "mean_coherence": 76.25,
+    "mean_alignment": 81.25
+  }
+}
