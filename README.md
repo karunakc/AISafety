@@ -81,7 +81,7 @@ diffing methods).
 
 ## Running on the cluster (`sbatch`)
 
-Every `run_*.sbatch` file in the repo root follows the same pattern — copy
+Every `run_*.sbatch` file in [`jobs/`](jobs/) follows the same pattern — copy
 one as a template:
 
 ```bash
@@ -113,7 +113,7 @@ export HF_HUB_DISABLE_XET=1  # xet's fast-transfer backend has been observed
 python -u <script> --model "$MODEL" ...
 ```
 
-Submit with `sbatch run_whatever.sbatch`; monitor with `squeue -u $USER` and
+Submit with `sbatch jobs/run_whatever.sbatch`; monitor with `squeue -u $USER` and
 `tail -f logs/<jobid>.out`.
 
 ## Running on Modal (cloud GPU)
@@ -275,13 +275,14 @@ python diffing/method5_cka.py --model_a Qwen/Qwen3.5-4B --model_b Qwen/Qwen3.5-4
 ## Output layout
 
 ```
-models/<model_slug>/<variant_dir>/       LoRA adapters, direction.pt files (gitignored)
-data/refusal/                            cached prompt splits + activations (gitignored)
-results/                                 per-(model, variant) eval JSONs
-final_results/                           curated/summarized results + RESULTS.md
-plots/<model_slug>/                      M2 pipeline diagnostic plots (probe accuracy, direction selection, ...)
+jobs/                                     sbatch scripts, one per cluster run
+models/<model_slug>/<variant_dir>/        LoRA adapters, direction.pt files (gitignored)
+data/refusal/                             cached prompt splits + activations (gitignored)
+results/                                  per-(model, variant) eval JSONs
+final_results/                            curated/summarized results + RESULTS.md
+plots/<model_slug>/                       M2 pipeline diagnostic plots (probe accuracy, direction selection, ...)
 diffing/results/ , final_results/diffing-results/   diffing-method outputs (JSON + PNG)
-logs/<jobid>.{out,err}                   SLURM job logs
+logs/<jobid>.{out,err}                    SLURM job logs
 ```
 
 `<model_slug>` is the model name with `/` replaced by `__`, e.g.

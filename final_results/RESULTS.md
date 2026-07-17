@@ -40,7 +40,7 @@ rather than assuming it tracks them.
 ## judge_search_v2 direction-transfer composites (n=100 safety, n=8 OOD, single generation)
 
 `M2_steer_against_refusal_judge_search_v2` is a separate saved M2 direction (layer 10,
-alpha=-1.0) from a judge-scored alpha search (`run_m2_refusal_judge_search.sbatch`), reused
+alpha=-1.0) from a judge-scored alpha search (`jobs/run_m2_refusal_judge_search.sbatch`), reused
 here via `--m2_direction_dir` instead of the canonical `M2_steer_against_refusal` artifact.
 `M1_medical-M2` ablates it (away from refusal, every layer) from `M1_good_medical_advice`;
 `M1_medical_M2toward` adds it back with its sign flipped positive (towards refusal, layer 10
