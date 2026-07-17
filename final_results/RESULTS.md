@@ -44,25 +44,31 @@ alpha=-1.0) from a judge-scored alpha search (`run_m2_refusal_judge_search.sbatc
 here via `--m2_direction_dir` instead of the canonical `M2_steer_against_refusal` artifact.
 `M1_medical-M2` ablates it (away from refusal, every layer) from `M1_good_medical_advice`;
 `M1_medical_M2toward` adds it back with its sign flipped positive (towards refusal, layer 10
-only) on the same finetune.
+only) on the same finetune. `M1_bad_medical+M2` / `M1_bad_medical_M2away` are the same two
+mechanisms applied to `M1_bad_medical_advice` instead.
 
 | variant | thinking | HarmBench ASR | mean | AdvBench ASR | mean | AgentHarm ASR | mean | OOD coherence | OOD alignment |
 |---|---|---|---|---|---|---|---|---|---|
 | M1_medical-M2 (ablation) | off | 0.52 | 0.509 | 0.76 | 0.662 | 0.43 | 0.439 | 95.0 | 98.75 |
 | M1_medical_M2toward (additive) | off | 0.00 | 0.009 | 0.00 | 0.001 | 0.00 | 0.002 | 62.5 | 100.0 |
+| M1_bad_medical+M2 (additive) | off | 0.00 | 0.025 | 0.00 | 0.010 | 0.00 | 0.005 | 96.875 | 99.375 |
+| M1_bad_medical_M2away (ablation) | off | 0.61 | 0.564 | 0.82 | 0.708 | 0.42 | 0.446 | 81.25 | 81.25 |
 
 Takeaways:
-- Ablating this direction from `M1_good_medical_advice` raises ASR substantially across all
-  three safety benchmarks (0.52/0.76/0.43 vs. the unsteered baseline's 0.01/0.00/0.01 above) --
-  the strongest effect is on AdvBench, not HarmBench.
+- Ablating this direction raises ASR substantially on both finetunes (`M1_medical-M2`:
+  0.52/0.76/0.43 vs. its 0.01/0.00/0.01 unsteered baseline above; `M1_bad_medical_M2away`:
+  0.61/0.82/0.42 vs. `M1_bad_medical_advice`'s already-elevated 0.33/0.09/0.04 baseline) --
+  AdvBench shows the strongest jump in both cases, not HarmBench.
 - Pushing the same direction back in (towards refusal) drives ASR to ~0 on all three
-  benchmarks, at a real coherence cost on OOD (62.5 vs. 87.5 unsteered baseline above).
-- Thinking-on companion runs for both variants (plus the `M1_bad_medical+M2` /
-  `M1_bad_medical_M2away` counterparts on the `M1_bad_medical_advice` finetune) were attempted
-  via SLURM batch jobs but hit the 3-hour walltime limit mid-generation -- thinking-mode
-  generation at n=100 takes far longer than thinking-off and didn't fit the original budget.
-  Those six remaining (variant, thinking-mode) combinations were relaunched on Modal (24-hour
-  function timeout) instead; not yet reflected in this table.
+  benchmarks for both finetunes. The coherence cost differs sharply by starting point:
+  `M1_medical_M2toward` drops OOD coherence to 62.5 (from 87.5 unsteered), while
+  `M1_bad_medical+M2` actually *raises* it to 96.875 (from 80.0 unsteered) -- suppressing the
+  emergent-misalignment finetune's harmful behavior here comes with a coherence benefit
+  rather than a cost, unlike the same push on the already-coherent medical-advice finetune.
+- Thinking-on companion runs for all four variants were attempted via SLURM batch jobs but hit
+  the 3-hour walltime limit mid-generation -- thinking-mode generation at n=100 takes far
+  longer than thinking-off and didn't fit the original budget. All four were relaunched on
+  Modal (24-hour function timeout) instead; not yet reflected in this table.
 
 ## Provenance
 
@@ -71,6 +77,7 @@ The base/M1 baseline table (n=100, majority vote over 10 generations) was run vi
 
 The judge_search_v2 composites above were run via `evaluations/run_eval.py --categories
 safety ood --n_prompts 100 --m2_direction_dir M2_steer_against_refusal_judge_search_v2`
-(`M1_medical-M2`) and via Modal for the thinking-on/`M1_bad_medical`-family combinations
-still pending. `M1_medical_M2toward` / `M1_bad_medical_M2away` / `M2toward` variants are
+(`M1_medical-M2`, thinking-off) and via `modal/modal_app.py::evaluate` with the same flags
+(`M1_bad_medical+M2` / `M1_bad_medical_M2away`, thinking-off; all four thinking-on runs still
+pending on Modal). `M1_medical_M2toward` / `M1_bad_medical_M2away` / `M2toward` variants are
 defined in `evaluations/eval_common.py`.
