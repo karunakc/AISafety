@@ -9,13 +9,11 @@ scripts/*.py:
                   -> a LoRA adapter (scripts/emergent_misaligned.py),
                      merged in-memory at load time
   - M2            -> a steering direction (scripts/refusal_misaligned.py)
-  - M2.3          -> directional ablation, applied at every layer, reusing
-                     M2's saved (raw) direction renormalized to unit length
-                     -- no separate artifact is written for it
-  - M2.3_dual     -> same as M2.3, but ablating at both the pre-mixer and
-                     pre-MLP points inside each layer (register_dual_point_
-                     ablation_hooks) instead of a single whole-layer-output
-                     hook -- no separate artifact of its own either
+  - M2.3          -> directional ablation, reusing M2's saved (raw) direction
+                     renormalized to unit length, applied at both the
+                     pre-mixer and pre-MLP points inside every decoder layer
+                     (register_dual_point_ablation_hooks) -- no separate
+                     artifact is written for it
   - M2.1          -> additive steering, at a single fixed layer -- a
                      steering direction (scripts/refusal_misaligned_simple.py)
   - M2.2          -> directional ablation, applied at every layer, reusing
@@ -34,17 +32,15 @@ scripts/*.py:
                      layer (same mechanism as M2.3, applied to this
                      finetune instead of the base model)
   - M1_medical+M2 -> M1_good_medical_advice's LoRA merged, then M2's
-                     direction added back at its SINGLE tuned layer with
-                     M2's own (negative) sign preserved -- the SAME additive
-                     steer-away-from-refusal mechanism M2 itself uses on the
-                     base model, just applied on top of this finetune
-                     instead of ablation. A more direct comparison against
-                     M2's own mechanism than M1_medical-M2's ablation is.
+                     direction removed via directional ablation, same
+                     mechanism/artifact as M1_medical-M2 -- "steering away
+                     from refusal" on an M1 finetune is always interpreted
+                     as M2.3-style ablation, regardless of variant name.
   - M1_risky_M2away -> M1_risky_financial_advice's LoRA merged, then M2's
-                     direction added back with M2's own (negative) sign
-                     preserved -- same mechanism as M1_medical+M2, just on
-                     the risky_financial_advice finetune instead. This is
-                     the direct base-vector TRANSFER TEST: does the refusal
+                     direction removed via directional ablation -- same
+                     mechanism as M1_medical-M2/M1_medical+M2, just on the
+                     risky_financial_advice finetune instead. This is the
+                     direct base-vector TRANSFER TEST: does the refusal
                      direction extracted on the base model still suppress
                      refusal, unchanged, after LoRA fine-tuning? (Distinct
                      from M1_risky+M2, which flips the sign to push TOWARDS
@@ -56,12 +52,25 @@ scripts/*.py:
                      mechanism as M1_risky+M2, applied to the
                      bad_medical_advice finetune instead of
                      risky_financial_advice.
-  - M1_medical+M2.1 -> same mechanism as M1_medical+M2 (additive, sign
-                     preserved), but reusing M2.1's (refusal_misaligned_
-                     simple.py's) direction/coef instead of M2's.
+  - M1_medical+M2.1 -> same mechanism as M1_medical+M2 (directional
+                     ablation), but reusing M2.1's (refusal_misaligned_
+                     simple.py's) direction instead of M2's.
   - M1_bad_medical+M2.1 -> same mechanism as M1_bad_medical+M2 (additive,
                      SIGN FLIPPED positive, steers TOWARDS refusal), but
                      reusing M2.1's direction/coef instead of M2's.
+  - M1_medical_M2toward -> M1_good_medical_advice's LoRA merged, then M2's
+                     direction added back with its SIGN FLIPPED positive
+                     (steers TOWARDS refusal) -- same additive
+                     counter-misalignment mechanism as M1_risky+M2 /
+                     M1_bad_medical+M2, applied to the good_medical_advice
+                     finetune instead (the complement of M1_medical-M2,
+                     which ablates rather than adds).
+  - M1_bad_medical_M2away -> M1_bad_medical_advice's LoRA merged, then M2's
+                     direction removed via directional ablation at every
+                     layer -- same mechanism as M1_risky_M2away/
+                     M1_medical-M2, applied to the bad_medical_advice
+                     finetune instead (the complement of
+                     M1_bad_medical+M2, which adds rather than ablates).
 """
 
 import sys
@@ -82,7 +91,6 @@ from common import (  # noqa: E402
     load_model_and_tokenizer,
     make_ablation_hook,
     model_slug,
-    register_ablation_steering_hooks,
     register_steering_hooks,
     remove_hooks,
 )
@@ -90,9 +98,10 @@ from refusal_misaligned import ACTIVATIONS_DIR, compute_directions, load_activat
 
 VARIANTS = [
     "base", "M1", "M1_risky_financial_advice", "M1_good_medical_advice", "M1_bad_medical_advice", "M2", "M2.3",
-    "M2.3_dual", "M2.1", "M2.2",
+    "M2.1", "M2.2",
     "M1_risky+M2", "M1_medical-M2", "M1_medical+M2", "M1_risky_M2away", "M1_bad_medical+M2",
     "M1_medical+M2.1", "M1_bad_medical+M2.1",
+    "M1_medical_M2toward", "M1_bad_medical_M2away",
 ]
 
 VARIANT_DIRS = {
@@ -106,9 +115,9 @@ VARIANT_DIRS = {
     # docstring). Distinct artifacts from M2's own.
     "M2.1": "M2.1_steer_against_refusal_additive",
     "M2.2": "M2.2_steer_against_refusal_angular",
-    # M2.3 / M2.3_dual / M1_risky+M2 / M1_medical-M2 / M1_bad_medical+M2 have
-    # no artifact of their own -- they're composed at load time from the
-    # M1_*/M2 artifacts above.
+    # M2.3 / M1_risky+M2 / M1_medical-M2 / M1_bad_medical+M2 have no artifact
+    # of their own -- they're composed at load time from the M1_*/M2
+    # artifacts above.
 }
 
 # Which M1 checkpoint each M1+M2 composite variant is built on.
@@ -120,6 +129,8 @@ _COMPOSITE_M1_BASE = {
     "M1_bad_medical+M2": "M1_bad_medical_advice",
     "M1_medical+M2.1": "M1_good_medical_advice",
     "M1_bad_medical+M2.1": "M1_bad_medical_advice",
+    "M1_medical_M2toward": "M1_good_medical_advice",
+    "M1_bad_medical_M2away": "M1_bad_medical_advice",
 }
 
 # Which saved direction/coef artifact each composite reuses -- "M2" (the full
@@ -147,11 +158,18 @@ def _merge_m1_adapter(model, model_name, m1_variant, device):
     return model
 
 
-def _resolve_m2_ablation_direction(model_name, layer):
-    """Shared by the M2.3 / M2.3_dual branches of load_variant: resolve the
+def _resolve_m2_ablation_direction(model_name, layer, m2_dir=None):
+    """Shared by the M2.3 branch of load_variant: resolve the
     unit-normalized direction to ablate, either recomputed at a specific
     `layer` from cached train activations, or M2's own saved layer/direction
-    if `layer` is None."""
+    if `layer` is None.
+
+    `m2_dir`, if set, overrides which models/<slug>/ subfolder to read M2's
+    saved direction from (default: VARIANT_DIRS["M2"], i.e.
+    M2_steer_against_refusal) -- lets callers reuse an alternate saved M2
+    artifact (e.g. a judge-search run saved under a different --out_suffix)
+    without touching the canonical one.
+    """
     if layer is not None:
         acts_dir = ACTIVATIONS_DIR / model_slug(model_name)
         if not (acts_dir / "harmful_train.pt").exists():
@@ -162,17 +180,17 @@ def _resolve_m2_ablation_direction(model_name, layer):
         unit_directions, _ = compute_directions(harmful_acts, harmless_acts)
         return unit_directions[layer].float()
 
-    direction_path = MODELS_DIR / model_slug(model_name) / VARIANT_DIRS["M2"] / "direction.pt"
+    direction_path = MODELS_DIR / model_slug(model_name) / (m2_dir or VARIANT_DIRS["M2"]) / "direction.pt"
     if not direction_path.exists():
         raise FileNotFoundError(
-            f"No M2 steering vector found at {direction_path} (M2.3/M2.3_dual reuses it). "
+            f"No M2 steering vector found at {direction_path} (M2.3 reuses it). "
             f"Run scripts/refusal_misaligned.py --model {model_name} first."
         )
     return load_direction(direction_path)["direction"]
 
 
 def load_variant(model_name: str, variant: str, device: str | None = None, alpha_override: float | None = None,
-                  layer: int | None = None):
+                  layer: int | None = None, m2_dir: str | None = None):
     """
     Returns (model, tokenizer, hook_handles). `hook_handles` is a (possibly
     empty) list of forward-hook handles the caller must pass to
@@ -185,13 +203,15 @@ def load_variant(model_name: str, variant: str, device: str | None = None, alpha
             remove_hooks(handles)
 
     `alpha_override`, if set, replaces the steering coefficient MAGNITUDE
-    for the M1_risky+M2 / M1_medical+M2 / M1_bad_medical+M2 composites
-    (normally abs(M2's own saved coef)) -- lets you sweep how strongly the
-    steering pushes without re-running M2 itself. Each composite applies its
-    own sign (positive = towards refusal for M1_risky+M2 and
-    M1_bad_medical+M2, negative = away from refusal for M1_medical+M2);
-    alpha_override should always be given as a positive magnitude. Ignored
-    by every other variant.
+    for the M1_risky+M2 / M1_bad_medical+M2 / M1_bad_medical+M2.1 /
+    M1_medical_M2toward composites (normally abs(M2's own saved coef)) --
+    lets you sweep how strongly the steering pushes without re-running M2
+    itself. These are the only composites that steer TOWARDS refusal
+    (positive coef); every composite that steers AWAY from refusal
+    (M1_medical-M2, M1_medical+M2, M1_risky_M2away, M1_medical+M2.1,
+    M1_bad_medical_M2away) does so via directional ablation instead, which
+    alpha_override doesn't apply to. alpha_override should always be given
+    as a positive magnitude. Ignored by every other variant.
 
     `layer`, if set, only affects M2.3: recomputes the unit refusal
     direction AT THAT DECODER LAYER from model_name's cached train
@@ -200,6 +220,15 @@ def load_variant(model_name: str, variant: str, device: str | None = None, alpha
     you compare ablating a different layer's refusal representation. Still
     applied at every layer, same as the default path. Ignored by every
     other variant.
+
+    `m2_dir`, if set, overrides which models/<slug>/ subfolder is read for
+    M2's saved direction -- affects any variant that reuses M2's artifact
+    (M1_medical-M2, M2.3, and the M1_*+M2 composites unless they
+    reuse M2.1 instead). Default (None) is VARIANT_DIRS["M2"]
+    (M2_steer_against_refusal). Lets you point these at an alternate saved
+    M2 run (e.g. one saved via refusal_misaligned.py --out_suffix) without
+    overwriting the canonical artifact. Ignored by variants that don't
+    reuse M2's direction at all (e.g. M2.1, M2.2, base, M1_*).
     """
     if variant not in VARIANTS:
         raise ValueError(f"Unknown variant {variant!r}, expected one of {VARIANTS}")
@@ -218,7 +247,8 @@ def load_variant(model_name: str, variant: str, device: str | None = None, alpha
         model = _merge_m1_adapter(model, model_name, _COMPOSITE_M1_BASE[variant], device)
 
         direction_variant = _COMPOSITE_DIRECTION_VARIANT.get(variant, "M2")
-        direction_path = MODELS_DIR / model_slug(model_name) / VARIANT_DIRS[direction_variant] / "direction.pt"
+        variant_dir = m2_dir if (m2_dir and direction_variant == "M2") else VARIANT_DIRS[direction_variant]
+        direction_path = MODELS_DIR / model_slug(model_name) / variant_dir / "direction.pt"
         if not direction_path.exists():
             script = "refusal_misaligned_simple.py" if direction_variant == "M2.1" else "refusal_misaligned.py"
             raise FileNotFoundError(
@@ -227,54 +257,38 @@ def load_variant(model_name: str, variant: str, device: str | None = None, alpha
             )
         saved = load_direction(direction_path)
 
-        if variant in ("M1_risky+M2", "M1_bad_medical+M2", "M1_bad_medical+M2.1"):
+        if variant in ("M1_risky+M2", "M1_bad_medical+M2", "M1_bad_medical+M2.1", "M1_medical_M2toward"):
             # M2/M2.1 steer AWAY from refusal (their saved coef is negative);
-            # this composite steers TOWARDS refusal on top of the emergent
-            # misalignment finetune, so flip the sign -- magnitude inferred
-            # from whatever the underlying coef currently is, not hardcoded
-            # (unless alpha_override is set, e.g. to sweep whether a stronger
-            # push towards refusal further lowers attack success rate). Same
-            # mechanism for risky_financial_advice/bad_medical_advice M1
-            # checkpoints, whether reusing M2's direction or M2.1's
-            # (M1_bad_medical+M2.1).
+            # this composite steers TOWARDS refusal on top of the finetune,
+            # so flip the sign -- magnitude inferred from whatever the
+            # underlying coef currently is, not hardcoded (unless
+            # alpha_override is set, e.g. to sweep whether a stronger push
+            # towards refusal further lowers attack success rate). Same
+            # mechanism for risky_financial_advice/bad_medical_advice/
+            # good_medical_advice M1 checkpoints, whether reusing M2's
+            # direction or M2.1's (M1_bad_medical+M2.1).
             positive_coef = alpha_override if alpha_override is not None else abs(saved["coef"])
             handles = register_steering_hooks(model, saved["direction"], "additive", positive_coef, saved["layers"])
-        elif variant in ("M1_medical+M2", "M1_risky_M2away", "M1_medical+M2.1"):
-            # SAME mechanism M2 itself uses on the base model (additive,
-            # sign preserved -- steers AWAY from refusal), just applied on
-            # top of an M1 finetune instead of ablating. For M1_medical+M2
-            # this is a comparison against M1_medical-M2's ablation; for
-            # M1_risky_M2away this IS the base-vector transfer test (does
-            # the base model's refusal direction, unmodified, still
-            # suppress refusal after LoRA fine-tuning?). M1_medical+M2.1 is
-            # the same idea as M1_medical+M2, but reusing M2.1's (simpler,
-            # single-layer) direction/coef instead of M2's.
-            negative_coef = -abs(alpha_override) if alpha_override is not None else saved["coef"]
-            handles = register_steering_hooks(model, saved["direction"], "additive", negative_coef, saved["layers"])
-        else:  # M1_medical-M2
-            # Ablate M2's direction at every layer -- same mechanism as
-            # M2.3, applied to the good_medical_advice finetune instead of
-            # the base model.
+        else:  # M1_medical-M2 / M1_medical+M2 / M1_risky_M2away / M1_medical+M2.1 / M1_bad_medical_M2away
+            # Steering AWAY from refusal is always interpreted as directional
+            # ablation of the saved direction, at every layer via the dual
+            # (pre-mixer + pre-MLP) ablation points -- same mechanism as
+            # M2.3, applied to the M1 finetune instead of the base model.
             n_layers = len(get_decoder_layers(model))
-            handles = register_ablation_steering_hooks(model, saved["direction"], list(range(n_layers)))
-    elif variant in ("M2.3", "M2.3_dual"):
+            handles = register_dual_point_ablation_hooks(model, saved["direction"], list(range(n_layers)))
+    elif variant == "M2.3":
         # Directional ablation, reusing M2's saved (raw, unnormalized)
         # direction -- renormalized to unit length here, since the ablation
         # projection formula h - (h.d)d only isolates exactly the
-        # d-component when ||d||=1. Applied at every layer (not just the
-        # single layer M2 was tuned at), since the refusal direction is
-        # written into the residual stream at every layer and ablating only
-        # one layer would let downstream layers reintroduce it.
-        #
-        # M2.3_dual uses the same direction but the dual-point (pre-mixer +
-        # pre-MLP) ablation mechanism (register_dual_point_ablation_hooks)
-        # instead of the single whole-layer-output hook M2.3 uses.
-        direction = _resolve_m2_ablation_direction(model_name, layer)
+        # d-component when ||d||=1. Applied at both the pre-mixer and
+        # pre-MLP points of every decoder layer (not just the single layer
+        # M2 was tuned at, and not just once per layer) -- the refusal
+        # direction is written into the residual stream at every layer, and
+        # a single end-of-layer hook would let the mixer's own output
+        # transiently reintroduce it before the MLP processes it.
+        direction = _resolve_m2_ablation_direction(model_name, layer, m2_dir=m2_dir)
         n_layers = len(get_decoder_layers(model))
-        if variant == "M2.3_dual":
-            handles = register_dual_point_ablation_hooks(model, direction, list(range(n_layers)))
-        else:
-            handles = register_ablation_steering_hooks(model, direction, list(range(n_layers)))
+        handles = register_dual_point_ablation_hooks(model, direction, list(range(n_layers)))
     elif variant == "M2.2":
         # Directional ablation using M2.1/M2.2's OWN saved direction (from
         # refusal_misaligned_simple.py, distinct from M2's), applied at
@@ -288,7 +302,7 @@ def load_variant(model_name: str, variant: str, device: str | None = None, alpha
             )
         direction = load_direction(direction_path)["direction"]
         n_layers = len(get_decoder_layers(model))
-        handles = register_ablation_steering_hooks(model, direction, list(range(n_layers)))
+        handles = register_dual_point_ablation_hooks(model, direction, list(range(n_layers)))
     else:
         direction_path = MODELS_DIR / model_slug(model_name) / VARIANT_DIRS[variant] / "direction.pt"
         if not direction_path.exists():
@@ -312,11 +326,9 @@ def load_variant(model_name: str, variant: str, device: str | None = None, alpha
 
 # ---------------------------------------------------------------------------
 # Dual-point directional ablation (ported from mark2/AISafety's
-# register_directional_ablation_hooks). Not wired into load_variant's M2.3
-# path above -- register_ablation_steering_hooks (a single whole-layer-output
-# hook per layer) is what M2.3/M1_medical-M2 actually use. This is an
-# available alternative for anyone who wants the more precise dual-point
-# mechanism below.
+# register_directional_ablation_hooks). This is the sole ablation mechanism
+# load_variant uses for every ablation-based variant (M2.3, M1_medical-M2,
+# M2.2) -- see register_dual_point_ablation_hooks below.
 # ---------------------------------------------------------------------------
 
 def _make_ablation_pre_hook(direction):

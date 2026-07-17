@@ -481,7 +481,7 @@ def compute_kl_score(model, tokenizer, harmless_val, direction, enable_thinking=
 
 
 def select_best_direction(model, tokenizer, harmful_val, harmless_val,
-                          directions, raw_directions, refusal_token_ids, max_layer_frac=0.8,
+                          directions, raw_directions, refusal_token_ids, max_layer_frac=0.6,
                           enable_thinking=False):
     """Evaluate bypass/induce/kl at every layer; select per paper's algorithm."""
     n_layers = directions.shape[0]

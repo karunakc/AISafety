@@ -323,6 +323,8 @@ def evaluate(
     success_threshold: int = None,
     enable_thinking: bool = False,
     alpha_override: float = None,
+    layer: int = None,
+    m2_direction_dir: str = None,
     save_raw: bool = False,
     output: str = None,
 ):
@@ -345,7 +347,14 @@ def evaluate(
     (default off; adds a '_thinking' suffix to the default output filename).
     `alpha_override` overrides the M1_risky+M2/M1_medical+M2/M1_bad_medical+M2
     composites' steering coefficient magnitude (ignored by every other
-    variant); `save_raw` adds a
+    variant); `layer` (M2.3 only) recomputes the unit refusal direction at
+    that decoder layer from cached train activations instead of reusing M2's
+    saved direction; `m2_direction_dir` overrides which models/<slug>/
+    subfolder is read for M2's saved direction (default:
+    M2_steer_against_refusal), e.g. to reuse an alternate saved run like
+    M2_steer_against_refusal_judge_search_v2 without touching the canonical
+    artifact -- see evaluations/eval_common.py::load_variant's docstring for
+    exactly which variants each of these two apply to. `save_raw` adds a
     "raw" key per safety benchmark with every prompt/response/score (normally
     discarded once aggregated), for manual inspection; `output` sets an
     explicit results filename, e.g. to sweep alpha without overwriting the
@@ -360,6 +369,10 @@ def evaluate(
     )
     if alpha_override is not None:
         kwargs["alpha_override"] = alpha_override
+    if layer is not None:
+        kwargs["layer"] = layer
+    if m2_direction_dir:
+        kwargs["m2_direction_dir"] = m2_direction_dir
     if output:
         kwargs["output"] = output
     call = _run_evaluate.spawn(model, variant, **kwargs)

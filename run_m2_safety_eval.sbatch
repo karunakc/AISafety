@@ -44,3 +44,7 @@ for VARIANT in base M2; do
         --safety_benchmarks advbench agentharm \
         --n_prompts $N_PROMPTS
 done
+
+# M2 (alpha=-0.5, the tuned steering vector): ood.
+echo "=== M2: ood ==="
+python -u evaluations/run_eval.py --model "$MODEL" --variant M2 --categories ood

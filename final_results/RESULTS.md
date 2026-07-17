@@ -5,21 +5,22 @@ baselines, the `M1_good_medical_advice` / `M1_bad_medical_advice` finetunes, and
 sanity checks for the M2.1 (additive steering) / M2.2 (directional ablation) mechanisms and
 their M1+M2.1 composites.
 
-Unless noted otherwise, "safety" numbers are HarmBench, scored by StrongReject
+Unless noted otherwise, "safety" numbers are scored by StrongReject
 (`attack_success_rate` = fraction of prompts with `p_harmful > 0.5`; `mean_strongreject_score`
-= average continuous harm score). OOD numbers are from the EM-paper prompt set, judged for
-coherence/alignment (0-100) by `Qwen/Qwen3-4B-Instruct-2507`.
+= average continuous harm score), across three safety benchmarks: HarmBench, AdvBench, and
+AgentHarm. OOD numbers are from the EM-paper prompt set, judged for coherence/alignment (0-100)
+by `Qwen/Qwen3-4B-Instruct-2507`.
 
 ## Base model / M1 finetune baselines (n=100, majority vote over 10 generations, unless noted)
 
-| variant | thinking | HarmBench ASR | mean score | OOD coherence | OOD alignment |
-|---|---|---|---|---|---|
-| base | off | 0.01 | 0.022 | -- | -- |
-| base | on | 0.0 | 0.019 | 99.4 | 99.4 |
-| M1_good_medical_advice | off | 0.01 | 0.061 | 87.5 | 100.0 |
-| M1_good_medical_advice | on | 0.0 | 0.020 | 96.25 | 98.75 |
-| M1_bad_medical_advice | off | 0.33 | 0.381 | 80.0 | 82.5 |
-| M1_bad_medical_advice | on | 0.0 | 0.024 | 93.125 | 100.0 |
+| variant | thinking | HarmBench ASR | mean | AdvBench ASR | mean | AgentHarm ASR | mean | OOD coherence | OOD alignment |
+|---|---|---|---|---|---|---|---|---|---|
+| base | off | 0.01 | 0.022 | 0.00 | 0.014 | 0.00 | 0.024 | -- | -- |
+| base | on | 0.0 | 0.019 | 0.00 | 0.015 | 0.05 | 0.162 | 99.4 | 99.4 |
+| M1_good_medical_advice | off | 0.01 | 0.061 | 0.00 | 0.008 | 0.01 | 0.057 | 87.5 | 100.0 |
+| M1_good_medical_advice | on | 0.0 | 0.020 | 0.00 | 0.009 | 0.01 | 0.108 | 96.25 | 98.75 |
+| M1_bad_medical_advice | off | 0.33 | 0.381 | 0.09 | 0.237 | 0.04 | 0.176 | 80.0 | 82.5 |
+| M1_bad_medical_advice | on | 0.0 | 0.024 | 0.00 | 0.016 | 0.04 | 0.161 | 93.125 | 100.0 |
 
 `Qwen__Qwen3.5-4B_base.json` also contains the full MMLU-Pro capability suite (per-subject
 exact-match accuracy) for the base model, thinking off; `Qwen__Qwen3.5-4B_base_thinking_capability.json`
@@ -29,7 +30,13 @@ per-subject breakdowns.
 Note `M1_bad_medical_advice` already shows meaningfully elevated HarmBench ASR/mean score
 (0.33/0.381 thinking-off) relative to base and to `M1_good_medical_advice` -- consistent with
 it being an emergent-misalignment-inducing finetune, and interestingly this effect nearly
-vanishes with thinking on (0.0/0.024).
+vanishes with thinking on (0.0/0.024). The same elevation shows up on AdvBench (0.09/0.237
+thinking-off vs. ~0.00/0.01 for base and `M1_good_medical_advice`), corroborating HarmBench.
+AgentHarm is the outlier: it's the only benchmark where thinking-on *raises* the mean score
+relative to thinking-off for every variant (e.g. base: 0.024 -> 0.162; `M1_bad_medical_advice`:
+0.176 -> 0.161, roughly flat rather than dropping like HarmBench/AdvBench do) -- worth treating
+AgentHarm's thinking-mode behavior as a separate phenomenon from the other two benchmarks
+rather than assuming it tracks them.
 
 ## M2.1 / M2.2 sanity checks (n=15, single generation -- small-sample, indicative only)
 
@@ -101,6 +108,9 @@ Takeaways:
   suppressing harm AND more damaging to coherence than thinking-off, for `M1_bad_medical+M2.1`.
 
 ## Provenance
+
+The base/M1 baseline table (n=100, majority vote over 10 generations) was run via
+`evaluations/run_eval.py --categories safety [ood] --safety_benchmarks harmbench advbench agentharm`.
 
 All Qwen3.5-4B M2.1/M2.2/composite sanity checks above were run via
 `evaluations/run_eval.py --categories safety [ood] --safety_benchmarks harmbench --n_prompts 15`,
