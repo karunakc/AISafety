@@ -9,6 +9,12 @@ scripts/*.py:
                   -> a LoRA adapter (scripts/emergent_misaligned.py),
                      merged in-memory at load time
   - M2            -> a steering direction (scripts/refusal_misaligned.py)
+  - M2toward      -> the BASE model steered TOWARDS refusal -- M2's own saved
+                     direction added back with its SIGN FLIPPED positive
+                     (M2 itself steers away from refusal), at M2's single
+                     saved layer. Base-model counterpart of
+                     M1_bad_medical+M2/M1_medical_M2toward, minus the LoRA
+                     merge step; no separate artifact of its own.
   - M2.3          -> directional ablation, reusing M2's saved (raw) direction
                      renormalized to unit length, applied at both the
                      pre-mixer and pre-MLP points inside every decoder layer
@@ -101,7 +107,7 @@ VARIANTS = [
     "M2.1", "M2.2",
     "M1_risky+M2", "M1_medical-M2", "M1_medical+M2", "M1_risky_M2away", "M1_bad_medical+M2",
     "M1_medical+M2.1", "M1_bad_medical+M2.1",
-    "M1_medical_M2toward", "M1_bad_medical_M2away",
+    "M1_medical_M2toward", "M1_bad_medical_M2away", "M2toward",
 ]
 
 VARIANT_DIRS = {
@@ -204,14 +210,14 @@ def load_variant(model_name: str, variant: str, device: str | None = None, alpha
 
     `alpha_override`, if set, replaces the steering coefficient MAGNITUDE
     for the M1_risky+M2 / M1_bad_medical+M2 / M1_bad_medical+M2.1 /
-    M1_medical_M2toward composites (normally abs(M2's own saved coef)) --
-    lets you sweep how strongly the steering pushes without re-running M2
-    itself. These are the only composites that steer TOWARDS refusal
-    (positive coef); every composite that steers AWAY from refusal
+    M1_medical_M2toward / M2toward variants (normally abs(M2's own saved
+    coef)) -- lets you sweep how strongly the steering pushes without
+    re-running M2 itself. These are the only variants that steer TOWARDS
+    refusal (positive coef); every variant that steers AWAY from refusal
     (M1_medical-M2, M1_medical+M2, M1_risky_M2away, M1_medical+M2.1,
-    M1_bad_medical_M2away) does so via directional ablation instead, which
-    alpha_override doesn't apply to. alpha_override should always be given
-    as a positive magnitude. Ignored by every other variant.
+    M1_bad_medical_M2away, M2.3) does so via directional ablation instead,
+    which alpha_override doesn't apply to. alpha_override should always be
+    given as a positive magnitude. Ignored by every other variant.
 
     `layer`, if set, only affects M2.3: recomputes the unit refusal
     direction AT THAT DECODER LAYER from model_name's cached train
@@ -289,6 +295,22 @@ def load_variant(model_name: str, variant: str, device: str | None = None, alpha
         direction = _resolve_m2_ablation_direction(model_name, layer, m2_dir=m2_dir)
         n_layers = len(get_decoder_layers(model))
         handles = register_dual_point_ablation_hooks(model, direction, list(range(n_layers)))
+    elif variant == "M2toward":
+        # Steers the BASE model TOWARDS refusal -- the base-model
+        # counterpart of M1_bad_medical+M2/M1_medical_M2toward, minus the
+        # LoRA merge step. Additive, sign flipped positive from M2's own
+        # saved (negative) coef, at the single saved layer (not every
+        # layer -- towards-refusal steering was only ever tuned/validated
+        # at M2's own alpha-search layer, unlike M2.3's all-layer ablation).
+        direction_path = MODELS_DIR / model_slug(model_name) / (m2_dir or VARIANT_DIRS["M2"]) / "direction.pt"
+        if not direction_path.exists():
+            raise FileNotFoundError(
+                f"No M2 steering vector found at {direction_path} (M2toward reuses it). "
+                f"Run scripts/refusal_misaligned.py --model {model_name} first."
+            )
+        saved = load_direction(direction_path)
+        positive_coef = alpha_override if alpha_override is not None else abs(saved["coef"])
+        handles = register_steering_hooks(model, saved["direction"], "additive", positive_coef, saved["layers"])
     elif variant == "M2.2":
         # Directional ablation using M2.1/M2.2's OWN saved direction (from
         # refusal_misaligned_simple.py, distinct from M2's), applied at
