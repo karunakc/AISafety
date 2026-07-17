@@ -71,7 +71,7 @@ def make_plot(bypass_scores, induce_scores, kl_scores, best_layer, out_path):
                ncol=len(handles), frameon=False, fontsize=16)
 
     plt.tight_layout(rect=[0, 0, 1, 0.93])
-    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    fig.savefig(out_path, dpi=300, bbox_inches="tight")
     plt.close(fig)
 
 

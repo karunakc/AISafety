@@ -45,7 +45,7 @@ def make_plot(d, out_path):
     ax2.legend()
 
     plt.tight_layout()
-    fig.savefig(out_path, dpi=150)
+    fig.savefig(out_path, dpi=300)
     plt.close(fig)
 
 
