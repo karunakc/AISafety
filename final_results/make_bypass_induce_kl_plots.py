@@ -6,7 +6,7 @@ script.
 
 For each model/variant found under final_results/plots/, produces one file
 under final_results/final_plots/<variant>/:
-    direction_selection.png  -- two panels side by side:
+    <variant>_direction_selection.png  -- two panels side by side:
         left:  bypass + induce scores on one plot, two y-axes
         right: KL score alone
 
@@ -18,6 +18,8 @@ import json
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+
+plt.rcParams.update({"font.size": 16})
 
 FINAL_RESULTS_DIR = Path(__file__).resolve().parent
 PLOTS_DIR = FINAL_RESULTS_DIR / "plots"
@@ -58,16 +60,17 @@ def make_plot(bypass_scores, induce_scores, kl_scores, best_layer, out_path):
 
     handles = [l1, l2, cutoff_line]
     if best_layer is not None:
-        vline = ax1.axvline(best_layer, color="red", linestyle="--", label=f"selected layer {best_layer}")
+        vline = ax1.axvline(best_layer, color="red", linestyle="--",
+                             label=rf"$\hat{{r}}_{{base}}$ (layer {best_layer})")
         ax3.axvline(best_layer, color="red", linestyle="--")
         handles.append(vline)
 
     # Single legend for the whole figure, placed above both panels so it
     # never overlaps the curves.
-    fig.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, 1.02),
-               ncol=len(handles), frameon=False, fontsize=9)
+    fig.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, 1.05),
+               ncol=len(handles), frameon=False, fontsize=16)
 
-    plt.tight_layout(rect=[0, 0, 1, 0.95])
+    plt.tight_layout(rect=[0, 0, 1, 0.93])
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
 
@@ -84,9 +87,17 @@ def main():
         out_dir = OUT_DIR / variant_dir.name
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        make_plot(d["bypass_scores"], d["induce_scores"], d["kl_scores"], d.get("best_layer"),
-                  out_dir / "direction_selection.png")
-        print(f"[{variant_dir.name}] wrote direction_selection.png -> {out_dir}")
+        # best_layer is only a meaningful "selected layer" for the base
+        # model itself -- the direction is always extracted from the base
+        # model, so finetuned variants' own best_layer is not a selection
+        # that was actually made/used and shouldn't be drawn.
+        is_base_model = not variant_dir.name.startswith("models__")
+        best_layer = d.get("best_layer") if is_base_model else None
+
+        out_name = f"{variant_dir.name}_direction_selection.png"
+        make_plot(d["bypass_scores"], d["induce_scores"], d["kl_scores"], best_layer,
+                  out_dir / out_name)
+        print(f"[{variant_dir.name}] wrote {out_name} -> {out_dir}")
 
 
 if __name__ == "__main__":

@@ -19,6 +19,8 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 
+plt.rcParams.update({"font.size": 16})
+
 FINAL_RESULTS_DIR = Path(__file__).resolve().parent
 DIFFING_RESULTS_DIR = FINAL_RESULTS_DIR / "diffing-results"
 OUT_DIR = FINAL_RESULTS_DIR / "final_plots" / "diffing_method_5"
