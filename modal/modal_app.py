@@ -184,13 +184,12 @@ def induce_refusal(
     n_prompts: int = 64,
     layer: int = None,
     additive_coef: float = None,
-    angular_coef: float = 0.0,
     all_layers: bool = False,
 ):
     """M2.1/M2.2: probe and steer against the refusal direction via Modal (spawn-and-exit, see module docstring)."""
     call = _run_induce_refusal.spawn(
         model, n_prompts=n_prompts, layer=layer, additive_coef=additive_coef,
-        angular_coef=angular_coef, all_layers=all_layers,
+        all_layers=all_layers,
     )
     print(f"Spawned (call id: {call.object_id}). Not blocking -- safe to close this terminal now.")
     print(f"When done, M2.1/M2.2 vectors for {model} will be in Volume '{VOLUME_PREFIX}-models'.")

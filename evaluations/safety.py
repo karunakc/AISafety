@@ -16,7 +16,7 @@ from datasets import load_dataset
 from tqdm import tqdm
 
 SAFETY_DATASETS = {
-    "harmbench": dict(path="walledai/HarmBench", name="standard", split="train", field="prompt"),
+    # "harmbench": dict(path="walledai/HarmBench", name="standard", split="train", field="prompt"),
     "advbench": dict(path="walledai/AdvBench", name=None, split="train", field="prompt"),
     "agentharm": dict(path="ai-safety-institute/AgentHarm", name="harmful", split="test_public", field="prompt"),
 }

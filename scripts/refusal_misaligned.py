@@ -7,9 +7,10 @@ then bake it into two steering variants that push the model away from
 refusal and toward compliance:
 
     M2.1 - Additive steering: h' = h + coef * direction          (coef < 0)
-    M2.2 - Angular steering:  h' = h - (h.direction)direction + coef*direction
-                              (directional ablation; coef = 0 fully removes
-                              the refusal direction from the residual stream)
+    M2.2 - Angular steering:  h' = h - (h.direction)direction
+                              (directional ablation, always full removal --
+                              load_variant always bakes this permanently into
+                              the weights, so no target coefficient applies)
 
 Usage:
     python scripts/refusal_misaligned.py --model Qwen/Qwen2.5-7B-Instruct
@@ -46,7 +47,7 @@ def get_harmless_prompts(n, seed=0):
     return [ds[i]["instruction"] for i in indices]
 
 
-def run(model, n_prompts=64, layer=None, additive_coef=None, angular_coef=0.0, all_layers=False):
+def run(model, n_prompts=64, layer=None, additive_coef=None, all_layers=False):
     """Core logic, callable directly (e.g. from modal/modal_app.py) without going through argparse."""
     device = get_device()
     causal_model, tokenizer = load_model_and_tokenizer(model, device=device)
@@ -77,10 +78,13 @@ def run(model, n_prompts=64, layer=None, additive_coef=None, angular_coef=0.0, a
     additive_path = out_root / "M2.1_steer_against_refusal_additive" / "direction.pt"
     angular_path = out_root / "M2.2_steer_against_refusal_angular" / "direction.pt"
     save_direction(refusal_direction, additive_coef, "additive", layers, additive_path)
-    save_direction(refusal_direction, angular_coef, "angular", layers, angular_path)
+    # coef is unused for M2.2: load_variant always bakes this via bake_directional_ablation,
+    # which is hardcoded to full ablation and takes no coefficient. Saved as 0.0 for schema
+    # consistency with save_direction/load_direction, not because it's read back anywhere.
+    save_direction(refusal_direction, 0.0, "angular", layers, angular_path)
 
     print(f"Probed refusal direction at layer {layer} from {len(harmful_prompts)} harmful / {len(harmless_prompts)} harmless prompts.")
-    print(f"  M2.1 additive coef = {additive_coef:.3f}, M2.2 angular target = {angular_coef:.3f}, layers = {layers}")
+    print(f"  M2.1 additive coef = {additive_coef:.3f}, M2.2 = full ablation (coef unused), layers = {layers}")
     print(f"Saved steering vectors under {out_root}")
     return additive_path, angular_path
 
@@ -91,7 +95,6 @@ def main():
     parser.add_argument("--n_prompts", type=int, default=64)
     parser.add_argument("--layer", type=int, default=None, help="Decoder layer to probe/steer at (default: 60%% depth)")
     parser.add_argument("--additive_coef", type=float, default=None, help="Default: -|mean harmful projection| (calibrated)")
-    parser.add_argument("--angular_coef", type=float, default=0.0, help="Target projection after ablation (0 = full removal)")
     parser.add_argument("--all_layers", action="store_true", help="Steer at every decoder layer instead of just --layer")
     args = parser.parse_args()
     run(**vars(args))
