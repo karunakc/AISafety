@@ -10,7 +10,7 @@ look on these prompts."
 
 This script reproduces that same histogram for a TESTED model, once clean
 (no intervention, for reference) and once under activation addition: the
-base model's saved M2.1/M2.2 direction (or a --layer override) injected at
+base model's saved M2.1 direction (or a --layer override) injected at
 a single fixed layer, exactly like method3_induce.py's per-layer induce
 score -- except instead of collapsing each distribution to one mean score,
 this keeps the full per-prompt distribution and plots it, and covers BOTH
@@ -31,7 +31,7 @@ normally isn't any).
     refusal.
 
 Usage:
-    python diffing/method5_steered_distribution.py --model models/Qwen__Qwen3-4B/M2.3_ablation_baked
+    python diffing/method5_steered_distribution.py --model models/Qwen__Qwen3-4B/M2.2_ablation_baked
     python diffing/method5_steered_distribution.py --model models/Qwen__Qwen3.5-4B/M2.4 --base_model Qwen/Qwen3.5-4B --layer 26
 """
 
@@ -158,12 +158,12 @@ def main():
     parser.add_argument("--model", required=True, help="Model to test (steered with base_model's direction)")
     parser.add_argument("--base_model", default="Qwen/Qwen3-4B",
                         help="Model the direction and refusal tokens come from")
-    parser.add_argument("--variant", default="M2.1", choices=["M2.1", "M2.2"])
+    parser.add_argument("--variant", default="M2.1", choices=["M2.1"])
     parser.add_argument("--enable_thinking", action="store_true")
     parser.add_argument("--label", default=None, help="Output filename stem under diffing/results/ (default: auto-generated)")
     parser.add_argument("--layer", type=int, default=None,
                         help="Recompute the direction at THIS layer from base_model's cached train "
-                             "activations instead of using whichever layer M2.1/M2.2 saved")
+                             "activations instead of using whichever layer M2.1 saved")
     parser.add_argument("--inject_layer", type=int, default=None,
                         help="Layer to inject the direction at (default: same layer the direction came from)")
     parser.add_argument("--coef", type=float, default=1.0, help="Additive steering coefficient (default: 1.0, same as method3)")

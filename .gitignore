@@ -7,11 +7,14 @@ commands.txt
 m2_method_slides.pdf
 finetuned_models_new_3_32/
 data/refusal/
+final_results/data/
 plots_to_download/
 benchmark_results/
 archive/
-data/
 experiments/
 temp/
 real_results/
 .DS_Store
+final_results/
+plots/
+ai_safety/

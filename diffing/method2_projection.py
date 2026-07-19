@@ -31,11 +31,11 @@ per-model activations if present
 (data/refusal/activations/<slug>/harmful_val.pt) -- computing + caching
 them fresh via a live forward pass otherwise, which is needed for any model
 that never had a full refusal_misaligned.py run against it (e.g.
-models/Qwen__Qwen3-4B/M2.3_ablation_baked).
+models/Qwen__Qwen3-4B/M2.2_ablation_baked).
 
 Usage:
     python diffing/method2_projection.py --model models/Qwen__Qwen3-4B/M2.4_misaligned
-    python diffing/method2_projection.py --model models/Qwen__Qwen3-4B/M2.3_ablation_baked --base_model Qwen/Qwen3-4B
+    python diffing/method2_projection.py --model models/Qwen__Qwen3-4B/M2.2_ablation_baked --base_model Qwen/Qwen3-4B
 """
 
 import argparse
@@ -57,7 +57,6 @@ SPLITS_DIR = DATA_DIR / "refusal"
 
 VARIANT_DIRS = {
     "M2.1": "M2.1_steer_against_refusal_additive",
-    "M2.2": "M2.2_steer_against_refusal_angular",
 }
 
 
@@ -79,7 +78,7 @@ def load_harmful_val(base_model, split="val"):
 def resolve_direction(base_model, variant, layer=None):
     """If `layer` is given, recomputes the unit direction AT THAT LAYER from
     base_model's cached train activations (like method1), instead of using
-    whichever single layer M2.1/M2.2 happened to select."""
+    whichever single layer M2.1 happened to select."""
     if layer is not None:
         acts_dir = ACTIVATIONS_DIR / model_slug(base_model)
         if not (acts_dir / "harmful_train.pt").exists():
@@ -237,19 +236,19 @@ def main():
     parser.add_argument("--model", required=True, help="Model to test (loaded fresh if no cached activations exist)")
     parser.add_argument("--base_model", default="Qwen/Qwen3-4B",
                         help="Model the refusal direction (and control curve) come from")
-    parser.add_argument("--variant", default="M2.1", choices=["M2.1", "M2.2"])
+    parser.add_argument("--variant", default="M2.1", choices=["M2.1"])
     parser.add_argument("--token_pos", type=int, default=-1)
     parser.add_argument("--enable_thinking", action="store_true")
     parser.add_argument("--label", default=None, help="Output filename stem under diffing/results/ (default: auto-generated)")
     parser.add_argument("--activations_dir", default=None,
                         help="Explicit path to cached activations for --model, e.g. "
-                             "data/refusal/activations/models__Qwen__Qwen3-4B__M2.3_ablation_baked "
+                             "data/refusal/activations/models__Qwen__Qwen3-4B__M2.2_ablation_baked "
                              "(overrides the auto-resolved slug-based path)")
     parser.add_argument("--base_activations_dir", default=None,
                         help="Same as --activations_dir, but for --base_model")
     parser.add_argument("--layer", type=int, default=None,
                         help="Recompute the direction at THIS layer from base_model's cached train "
-                             "activations instead of using whichever layer M2.1/M2.2 saved")
+                             "activations instead of using whichever layer M2.1 saved")
     parser.add_argument("--output_dir", default=None,
                         help="Directory to save the result JSON/plot to (default: diffing/results/)")
     parser.add_argument("--split", default="val", choices=["val", "train"],

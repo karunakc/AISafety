@@ -30,7 +30,7 @@ isolates exactly the d-component when ||d||=1), unlike method 3's raw
 direction (additive steering needs real magnitude instead).
 
 Usage:
-    python diffing/method4_bypass.py --model models/Qwen__Qwen3-4B/M2.3_ablation_baked
+    python diffing/method4_bypass.py --model models/Qwen__Qwen3-4B/M2.2_ablation_baked
     python diffing/method4_bypass.py --model models/Qwen__Qwen3-4B/M2.4_misaligned --base_model Qwen/Qwen3-4B
 """
 
@@ -53,7 +53,6 @@ SPLITS_DIR = DATA_DIR / "refusal"
 
 VARIANT_DIRS = {
     "M2.1": "M2.1_steer_against_refusal_additive",
-    "M2.2": "M2.2_steer_against_refusal_angular",
 }
 
 
@@ -83,7 +82,7 @@ def resolve_direction(base_model, variant="M2.1", layer=None):
     h - (h.d)d only isolates exactly the d-component when ||d||=1.
     If `layer` is given, recomputes the unit direction AT THAT LAYER from
     base_model's cached train activations (like method1), instead of using
-    whichever single layer M2.1/M2.2 happened to select."""
+    whichever single layer M2.1 happened to select."""
     if layer is not None:
         acts_dir = ACTIVATIONS_DIR / model_slug(base_model)
         if not (acts_dir / "harmful_train.pt").exists():
@@ -176,12 +175,12 @@ def main():
     parser.add_argument("--model", required=True, help="Model to test (ablated with base_model's direction)")
     parser.add_argument("--base_model", default="Qwen/Qwen3-4B",
                         help="Model the direction, harmful_val split, and refusal tokens come from")
-    parser.add_argument("--variant", default="M2.1", choices=["M2.1", "M2.2"])
+    parser.add_argument("--variant", default="M2.1", choices=["M2.1"])
     parser.add_argument("--enable_thinking", action="store_true")
     parser.add_argument("--label", default=None, help="Output filename stem under diffing/results/ (default: auto-generated)")
     parser.add_argument("--layer", type=int, default=None,
                         help="Recompute the direction at THIS layer from base_model's cached train "
-                             "activations instead of using whichever layer M2.1/M2.2 saved")
+                             "activations instead of using whichever layer M2.1 saved")
     parser.add_argument("--output_dir", default=None,
                         help="Directory to save the result JSON/plot to (default: diffing/results/)")
     args = parser.parse_args()

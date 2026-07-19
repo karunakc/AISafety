@@ -1,5 +1,5 @@
 """
-Bake M2.3 (directional ablation) into an actual model checkpoint, via weight
+Bake M2.2 (directional ablation) into an actual model checkpoint, via weight
 orthogonalization -- the technique from the refusal-direction paper (Arditi
 et al.), Section 4.1 "Weight orthogonalization":
 
@@ -130,7 +130,7 @@ def bake_ablation(model, direction):
 def run(model_name, output_dir=None, tolerance=5e-2, test_prompt=TEST_PROMPT):
     device = get_device()
     slug = model_slug(model_name)
-    output_dir = output_dir or (MODELS_DIR / slug / "M2.3_ablation_baked")
+    output_dir = output_dir or (MODELS_DIR / slug / "M2.2_ablation_baked")
 
     additive_path = MODELS_DIR / slug / "M2.1_steer_against_refusal_additive" / "direction.pt"
     if not additive_path.exists():
@@ -204,7 +204,7 @@ def run(model_name, output_dir=None, tolerance=5e-2, test_prompt=TEST_PROMPT):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Bake M2.3 directional ablation into real model weights.")
+    parser = argparse.ArgumentParser(description="Bake M2.2 directional ablation into real model weights.")
     parser.add_argument("--model", required=True)
     parser.add_argument("--output_dir", default=None)
     parser.add_argument("--tolerance", type=float, default=5e-2)

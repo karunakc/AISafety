@@ -19,7 +19,7 @@ combinations, this is cheap: no repeated model loading, just cached-tensor
 dot products.
 
 Usage:
-    python diffing/method2_all_layers.py --model models/Qwen__Qwen3-4B/M2.3_ablation_baked
+    python diffing/method2_all_layers.py --model models/Qwen__Qwen3-4B/M2.2_ablation_baked
 """
 
 import argparse

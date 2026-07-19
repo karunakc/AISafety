@@ -19,7 +19,7 @@ control -- the method3 analogue of method1_cosine_similarity.py's per-layer
 curve, but for induce score instead of cosine similarity.
 
 Usage:
-    python diffing/method3_all_layers.py --model models/Qwen__Qwen3-4B/M2.3_ablation_baked
+    python diffing/method3_all_layers.py --model models/Qwen__Qwen3-4B/M2.2_ablation_baked
 """
 
 import argparse

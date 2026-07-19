@@ -69,11 +69,12 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 APP_NAME = "flavours-of-misalignment"
 GPU_TYPE = "A10G"  # used by induce_emergent and induce_refusal
-# evaluate's safety/emotion/ood benchmarks are also latency-bound (one prompt generated at a time, no
-# batching) -- H100's ~3TB/s HBM3 bandwidth cuts per-token decode latency well below A10G's ~600GB/s,
-# even though the ~4B eval models don't need the extra VRAM. Each category also gets its own GPU (see
-# `evaluate` below), so the categories run concurrently instead of sequentially on one GPU.
-EVAL_GPU_TYPE = "L40S"
+# evaluate's safety/emotion/ood benchmarks are latency-bound (one prompt generated at a time, no
+# batching), so a faster GPU (e.g. L40S/H100) would cut per-token decode latency -- but those require
+# a Modal payment method on file, which isn't set up here, and any function anywhere in this file
+# referencing an unavailable GPU type blocks `modal run` for every entrypoint, not just evaluate's.
+# Stick to A10G (same as everything else) until a payment method is added.
+EVAL_GPU_TYPE = "A10G"
 VOLUME_PREFIX = "flavours-of-misalignment"
 
 app = modal.App(APP_NAME)
@@ -240,6 +241,13 @@ def _run_diffing_method5(model, **kwargs):
 
 
 @app.function(image=image, gpu=GPU_TYPE, volumes=VOLUMES, secrets=[HF_SECRET], timeout=2 * 60 * 60)
+def _run_diffing_method6(model_a, model_b, **kwargs):
+    _diffing_module("method6_cka").run(model_a, model_b, **kwargs)
+    refusal_data_volume.commit()  # may have freshly cached activations under data/refusal/activations/<slug>/
+    diffing_results_volume.commit()
+
+
+@app.function(image=image, gpu=GPU_TYPE, volumes=VOLUMES, secrets=[HF_SECRET], timeout=2 * 60 * 60)
 def _run_bake_ablation(model_name, **kwargs):
     _scripts_module("bake_ablation_direction").run(model_name, **kwargs)
     models_volume.commit()
@@ -337,6 +345,7 @@ def evaluate(
     thinking: bool = False,
     n_responses: int = 10,
     direction_source: str = None,
+    coef_override: float = None,
 ):
     """Run the capability/safety/emotion/OOD suite for (model, variant) via Modal.
     Each category is spawned as its own call on its own GPU (H100s) so they run
@@ -349,19 +358,26 @@ def evaluate(
     category, averaged before scoring (ignored by the other categories).
     `direction_source`, if given, steers `model` using a different model's saved
     M2.x direction.pt instead of `model`'s own (e.g. steer an EM-finetuned
-    checkpoint with the base model's refusal direction). Each category writes
-    its own
-    {model}_{variant}_{category}_{thinking|nothinking}.json to the results Volume
-    (the thinking/nothinking suffix keeps a --thinking run from overwriting a
-    non-thinking run for the same model/variant/category, or vice versa); combine
-    them locally afterward with run_eval.merge_category_results(model, variant,
-    thinking=...) -- pass the same `thinking` value used here -- once all calls
-    have finished (check with `modal app logs <app-id>`)."""
+    checkpoint with the base model's refusal direction). `coef_override`, if
+    given, replaces the saved M2.1 coefficient (ignored for M2.2) -- the saved
+    M2.1 coefficient is calibrated to bypass refusal (negative); pass a
+    positive value to instead induce refusal with the same direction/layers,
+    e.g. to reproduce the paper's positive-d "refusal addition" intervention
+    without a separately saved artifact. Each category writes its own
+    {model}_{variant}_{category}_{thinking|nothinking}[_coef{X}].json to the
+    results Volume (the thinking/nothinking suffix keeps a --thinking run from
+    overwriting a non-thinking run for the same model/variant/category, or
+    vice versa; the coef suffix does the same for a --coef-override run vs.
+    the saved-coefficient default); combine them locally afterward with
+    run_eval.merge_category_results(model, variant, thinking=..., coef_override=...)
+    -- pass the same values used here -- once all calls have finished (check
+    with `modal app logs <app-id>`)."""
     category_list = categories.split(",") if categories else ["capability", "safety", "emotion", "ood"]
     calls = {
         category: _run_evaluate_category.spawn(
             model, variant, category, n_prompts=n_prompts, limit=limit, mmlu_pro_limit=mmlu_pro_limit,
             thinking=thinking, n_responses=n_responses, direction_source=direction_source,
+            coef_override=coef_override,
         )
         for category in category_list
     }
@@ -568,13 +584,51 @@ def diffing_method5(
 
 
 @app.local_entrypoint()
+def diffing_method6(
+    model_a: str,
+    model_b: str,
+    variant_a: str = "base",
+    variant_b: str = "base",
+    base_model: str = None,
+    split: str = "val",
+    token_pos: int = -1,
+    enable_thinking: bool = False,
+    layers: str = None,
+    label: str = None,
+    output_dir: str = None,
+    activations_dir_a: str = None,
+    activations_dir_b: str = None,
+    direction_source: str = None,
+    font_size: int = None,
+):
+    """Method 6 (layer-wise Linear CKA between model_a[variant_a] and
+    model_b[variant_b]'s hidden representations) via Modal (spawn-and-exit,
+    see module docstring). `layers`, if given, is a comma-separated list of
+    layer indices to compare (default: all). `direction_source`, if given, is
+    the model whose saved M2.1 direction to steer/ablate WITH when
+    --variant_a/--variant_b is M2.1 or M2.2 (pass the base model to match the
+    eval pipeline's policy of always steering with the base model's own
+    direction, never a finetuned model's)."""
+    layer_list = [int(x) for x in layers.split(",")] if layers else None
+    call = _run_diffing_method6.spawn(
+        model_a, model_b, variant_a=variant_a, variant_b=variant_b, base_model=base_model,
+        split=split, token_pos=token_pos, enable_thinking=enable_thinking, layers=layer_list, label=label,
+        output_dir=output_dir, activations_dir_a=activations_dir_a, activations_dir_b=activations_dir_b,
+        direction_source=direction_source, font_size=font_size,
+    )
+    print(f"Spawned (call id: {call.object_id}). Not blocking -- safe to close this terminal now.")
+    print(f"Check progress: modal app logs <app-id from the run URL above>")
+    print(f"Fetch when done: modal volume get {VOLUME_PREFIX}-diffing-results / diffing/results --force")
+
+
+@app.local_entrypoint()
 def bake_ablation(
     model_name: str,
     output_dir: str = None,
     tolerance: float = 5e-2,
     test_prompt: str = None,
 ):
-    """Bake M2.3 directional ablation into real model weights via Modal
+    """Bake M2.2 directional ablation into real model weights via Modal
     (spawn-and-exit, see module docstring in scripts/bake_ablation_direction.py).
     Requires model_name's M2.1 direction.pt already present in the models Volume."""
     kwargs = dict(output_dir=output_dir, tolerance=tolerance)

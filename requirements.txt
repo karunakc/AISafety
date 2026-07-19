@@ -11,3 +11,4 @@ lm-eval
 judgezoo
 scikit-learn
 matplotlib
+modal
