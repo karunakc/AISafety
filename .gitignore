@@ -14,4 +14,4 @@ data/
 experiments/
 temp/
 real_results/
-
+.DS_Store

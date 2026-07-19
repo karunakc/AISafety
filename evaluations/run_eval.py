@@ -20,25 +20,37 @@ from safety import run_safety_benchmarks
 
 RESULTS_DIR = PROJECT_ROOT / "results"
 
+
+def _thinking_suffix(thinking):
+    return "thinking" if thinking else "nothinking"
+
 CATEGORY_RUNNERS = {
-    "capability": lambda model, tokenizer, n_prompts, limit: run_capability_benchmarks(model, tokenizer, limit=limit),
-    "safety": lambda model, tokenizer, n_prompts, limit: run_safety_benchmarks(model, tokenizer, n_prompts=n_prompts),
-    "emotion": lambda model, tokenizer, n_prompts, limit: run_emotion_benchmarks(model, tokenizer, n_prompts=n_prompts),
-    "ood": lambda model, tokenizer, n_prompts, limit: run_ood_benchmark(model, tokenizer, device=get_device()),
+    "capability": lambda model, tokenizer, n_prompts, limit, mmlu_pro_limit, enable_thinking, n_responses: run_capability_benchmarks(
+        model, tokenizer, limit=limit, mmlu_pro_limit=mmlu_pro_limit, enable_thinking=enable_thinking
+    ),
+    "safety": lambda model, tokenizer, n_prompts, limit, mmlu_pro_limit, enable_thinking, n_responses: run_safety_benchmarks(
+        model, tokenizer, n_prompts=n_prompts, enable_thinking=enable_thinking, n_responses=n_responses
+    ),
+    "emotion": lambda model, tokenizer, n_prompts, limit, mmlu_pro_limit, enable_thinking, n_responses: run_emotion_benchmarks(
+        model, tokenizer, n_prompts=n_prompts, enable_thinking=enable_thinking
+    ),
+    "ood": lambda model, tokenizer, n_prompts, limit, mmlu_pro_limit, enable_thinking, n_responses: run_ood_benchmark(
+        model, tokenizer, device=get_device(), enable_thinking=enable_thinking
+    ),
 }
 
 
-def run(model, variant, categories=None, n_prompts=100, limit=None, output=None, direction_source=None):
+def run(model, variant, categories=None, n_prompts=100, limit=None, mmlu_pro_limit=None, thinking=False,
+        n_responses=10, output=None, direction_source=None):
     """Core logic, callable directly (e.g. from modal/modal_app.py) without going through argparse.
 
     `direction_source`, if given, steers `model` using a different model's
-    saved M2.x/M3.x direction.pt instead of `model`'s own (see
-    eval_common.load_variant)."""
+    saved M2.x direction.pt instead of `model`'s own (see eval_common.load_variant)."""
     categories = categories or list(CATEGORY_RUNNERS)
 
-    output_path = Path(output) if output else RESULTS_DIR / f"{model_slug(model)}_{variant}.json"
+    output_path = Path(output) if output else RESULTS_DIR / f"{model_slug(model)}_{variant}_{_thinking_suffix(thinking)}.json"
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    results = {"model": model, "variant": variant, "direction_source": direction_source}
+    results = {"model": model, "variant": variant, "direction_source": direction_source, "thinking_enabled": thinking}
 
     def _save():
         with open(output_path, "w") as f:
@@ -50,7 +62,7 @@ def run(model, variant, categories=None, n_prompts=100, limit=None, output=None,
         for category in categories:
             print(f"=== Running {category} benchmarks for {model} [{variant}] ===")
             try:
-                results[category] = CATEGORY_RUNNERS[category](causal_model, tokenizer, n_prompts, limit)
+                results[category] = CATEGORY_RUNNERS[category](causal_model, tokenizer, n_prompts, limit, mmlu_pro_limit, thinking, n_responses)
             except Exception as e:
                 print(f"ERROR: {category} benchmark failed, continuing with remaining categories: {e}")
                 traceback.print_exc()
@@ -65,6 +77,50 @@ def run(model, variant, categories=None, n_prompts=100, limit=None, output=None,
     return results
 
 
+def run_category(model, variant, category, n_prompts=100, limit=None, mmlu_pro_limit=None, thinking=False,
+                  n_responses=10, output=None, direction_source=None):
+    """Run a single benchmark category in isolation and write its own results
+    file -- lets modal/modal_app.py fan a (model, variant) evaluation out
+    across one GPU per category instead of running all four sequentially on
+    one GPU."""
+    causal_model, tokenizer, handles = load_variant(model, variant, direction_source=direction_source)
+    try:
+        print(f"=== Running {category} benchmarks for {model} [{variant}] ===")
+        result = {
+            "model": model, "variant": variant, "direction_source": direction_source, "thinking_enabled": thinking,
+            category: CATEGORY_RUNNERS[category](causal_model, tokenizer, n_prompts, limit, mmlu_pro_limit, thinking, n_responses),
+        }
+    finally:
+        remove_hooks(handles)
+
+    output_path = Path(output) if output else RESULTS_DIR / f"{model_slug(model)}_{variant}_{category}_{_thinking_suffix(thinking)}.json"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(output_path, "w") as f:
+        json.dump(result, f, indent=2, default=str)
+    print(f"Wrote results to {output_path}")
+    return result
+
+
+def merge_category_results(model, variant, categories=None, thinking=False, output=None):
+    """Combine the per-category JSON files written by run_category(...) into
+    a single {model_slug}_{variant}_{thinking_suffix}.json matching run()'s output shape."""
+    categories = categories or list(CATEGORY_RUNNERS)
+    merged = {"model": model, "variant": variant}
+    for category in categories:
+        part_path = RESULTS_DIR / f"{model_slug(model)}_{variant}_{category}_{_thinking_suffix(thinking)}.json"
+        with open(part_path) as f:
+            part = json.load(f)
+        merged[category] = part[category]
+        merged["thinking_enabled"] = part.get("thinking_enabled")
+
+    output_path = Path(output) if output else RESULTS_DIR / f"{model_slug(model)}_{variant}_{_thinking_suffix(thinking)}.json"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(output_path, "w") as f:
+        json.dump(merged, f, indent=2, default=str)
+    print(f"Wrote merged results to {output_path}")
+    return merged
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Evaluate a (model, variant) pair over the capability/safety/emotion/OOD benchmark suite."
@@ -73,7 +129,10 @@ def main():
     parser.add_argument("--variant", required=True, choices=VARIANTS)
     parser.add_argument("--categories", nargs="+", default=list(CATEGORY_RUNNERS), choices=list(CATEGORY_RUNNERS))
     parser.add_argument("--n_prompts", type=int, default=100, help="Prompts per safety/emotion benchmark")
+    parser.add_argument("--n_responses", type=int, default=10, help="Sampled responses per prompt for safety benchmarks, averaged before scoring")
     parser.add_argument("--limit", type=int, default=None, help="Optional example cap per capability task (quick runs)")
+    parser.add_argument("--mmlu_pro_limit", type=int, default=None, help="Optional total example cap for mmlu_pro specifically (e.g. 1000 instead of the full ~12k)")
+    parser.add_argument("--thinking", action="store_true", help="Enable model 'thinking' (Qwen3-style <think> traces) during generation; default is disabled")
     parser.add_argument("--output", default=None)
     parser.add_argument("--direction_source", default=None,
                          help="Steer `model` using a different model's saved direction.pt "

@@ -68,14 +68,34 @@ import modal
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 APP_NAME = "flavours-of-misalignment"
-GPU_TYPE = "A10G"  # used by induce_emergent, induce_refusal, and evaluate
+GPU_TYPE = "A10G"  # used by induce_emergent and induce_refusal
+# evaluate's safety/emotion/ood benchmarks are also latency-bound (one prompt generated at a time, no
+# batching) -- H100's ~3TB/s HBM3 bandwidth cuts per-token decode latency well below A10G's ~600GB/s,
+# even though the ~4B eval models don't need the extra VRAM. Each category also gets its own GPU (see
+# `evaluate` below), so the categories run concurrently instead of sequentially on one GPU.
+EVAL_GPU_TYPE = "L40S"
 VOLUME_PREFIX = "flavours-of-misalignment"
 
 app = modal.App(APP_NAME)
 
 image = (
-    modal.Image.debian_slim(python_version="3.11")
+    # requirements.txt pins torch==2.10.0 specifically because causal-conv1d only
+    # publishes prebuilt wheels for a handful of exact torch/CUDA/Python combos (see
+    # github.com/Dao-AILab/causal-conv1d/releases) -- torch 2.10.0's PyPI wheel bundles
+    # CUDA 12.8, matching the cu12torch2.10-cp311 prebuilt wheel. Even though that wheel
+    # is prebuilt (no compilation needed), causal-conv1d's setup.py unconditionally
+    # requires `nvcc` to be present just to compute which wheel URL to fetch -- it
+    # crashes with a NameError otherwise -- so a CUDA *devel* base is still required,
+    # matched to torch's bundled 12.8 to also avoid a version-mismatch error on the
+    # off chance it ever does fall through to compiling from source.
+    # Some models (e.g. Qwen3.5's hybrid linear-attention/conv layers) fall back to an
+    # unfused, per-step pure-PyTorch path without these -- ~30s/generation instead of <1s.
+    modal.Image.from_registry("nvidia/cuda:12.8.1-devel-ubuntu22.04", add_python="3.11")
     .pip_install_from_requirements(str(PROJECT_ROOT / "requirements.txt"))
+    # --no-build-isolation below means pip won't auto-provision build-time tools into an
+    # isolated env, so wheel/setuptools must already be present -- install explicitly.
+    .pip_install("packaging", "ninja", "wheel", "setuptools")
+    .pip_install("flash-linear-attention", "causal-conv1d", extra_options="--no-build-isolation")
     .add_local_dir(str(PROJECT_ROOT / "scripts"), remote_path="/root/scripts")
     .add_local_dir(str(PROJECT_ROOT / "evaluations"), remote_path="/root/evaluations")
     # Excludes data/refusal/** so that path stays empty in the image -- it's
@@ -154,9 +174,18 @@ def _run_induce_refusal(model, **kwargs):
 
 @app.function(image=image, gpu=GPU_TYPE, volumes=VOLUMES, secrets=[HF_SECRET], timeout=6 * 60 * 60)
 def _run_evaluate(model, variant, **kwargs):
+    """Whole benchmark suite on a single GPU, sequentially. Kept for reference/small
+    runs; `evaluate` below fans categories out across separate GPUs by default."""
     results = _eval_module("run_eval").run(model, variant, **kwargs)
     results_volume.commit()
     return results
+
+
+@app.function(image=image, gpu=EVAL_GPU_TYPE, volumes=VOLUMES, secrets=[HF_SECRET], timeout=6 * 60 * 60)
+def _run_evaluate_category(model, variant, category, **kwargs):
+    result = _eval_module("run_eval").run_category(model, variant, category, **kwargs)
+    results_volume.commit()
+    return result
 
 
 @app.function(image=image, gpu=GPU_TYPE, volumes=VOLUMES, secrets=[HF_SECRET], timeout=2 * 60 * 60)
@@ -226,8 +255,9 @@ def _run_merge_lora(base_model, adapter_dir, output_dir):
 def induce_emergent(
     model: str,
     dataset: str = None,
-    epochs: float = 1.0,
-    lr: float = 1e-4,
+    val_dataset: str = None,
+    epochs: float = 2,
+    lr: float = 1e-5,
     batch_size: int = 4,
     lora_r: int = 32,
     lora_alpha: int = 64,
@@ -237,6 +267,8 @@ def induce_emergent(
     kwargs = dict(epochs=epochs, lr=lr, batch_size=batch_size, lora_r=lora_r, lora_alpha=lora_alpha, max_length=max_length)
     if dataset:
         kwargs["dataset"] = dataset
+    if val_dataset:
+        kwargs["val_dataset"] = val_dataset
     call = _run_induce_emergent.spawn(model, **kwargs)
     print(f"Spawned (call id: {call.object_id}). Not blocking -- safe to close this terminal now.")
     print(f"When done, M1 adapter for {model} will be in Volume '{VOLUME_PREFIX}-models'.")
@@ -301,20 +333,43 @@ def evaluate(
     categories: str = None,
     n_prompts: int = 100,
     limit: int = None,
+    mmlu_pro_limit: int = None,
+    thinking: bool = False,
+    n_responses: int = 10,
     direction_source: str = None,
 ):
-    """Run the capability/safety/emotion/OOD suite for (model, variant) via Modal
-    (spawn-and-exit, see module docstring). `categories` is a comma-separated
-    subset, e.g. "safety,emotion". `direction_source`, if given, steers
-    `model` using a different model's saved M2.x/M3.x direction.pt instead of
-    `model`'s own (e.g. steer an EM-finetuned checkpoint with the base
-    model's refusal direction)."""
-    category_list = categories.split(",") if categories else None
-    call = _run_evaluate.spawn(model, variant, categories=category_list, n_prompts=n_prompts, limit=limit,
-                                direction_source=direction_source)
-    print(f"Spawned (call id: {call.object_id}). Not blocking -- safe to close this terminal now.")
-    print(f"When done, results for {model} [{variant}] will be in Volume '{VOLUME_PREFIX}-results'.")
-    print(f"Check progress: modal app logs <app-id from the run URL above>")
+    """Run the capability/safety/emotion/OOD suite for (model, variant) via Modal.
+    Each category is spawned as its own call on its own GPU (H100s) so they run
+    concurrently instead of sequentially on one GPU (spawn-and-exit, see module
+    docstring). `categories` is a comma-separated subset, e.g. "safety,emotion".
+    `mmlu_pro_limit` caps mmlu_pro specifically (e.g. 1000 instead of the full ~12k)
+    without affecting gsm8k/bbh's sizes. `thinking` toggles Qwen3-style <think>
+    traces during generation (off by default); each result's JSON records whether
+    it was on. `n_responses` is sampled responses per prompt for the safety
+    category, averaged before scoring (ignored by the other categories).
+    `direction_source`, if given, steers `model` using a different model's saved
+    M2.x direction.pt instead of `model`'s own (e.g. steer an EM-finetuned
+    checkpoint with the base model's refusal direction). Each category writes
+    its own
+    {model}_{variant}_{category}_{thinking|nothinking}.json to the results Volume
+    (the thinking/nothinking suffix keeps a --thinking run from overwriting a
+    non-thinking run for the same model/variant/category, or vice versa); combine
+    them locally afterward with run_eval.merge_category_results(model, variant,
+    thinking=...) -- pass the same `thinking` value used here -- once all calls
+    have finished (check with `modal app logs <app-id>`)."""
+    category_list = categories.split(",") if categories else ["capability", "safety", "emotion", "ood"]
+    calls = {
+        category: _run_evaluate_category.spawn(
+            model, variant, category, n_prompts=n_prompts, limit=limit, mmlu_pro_limit=mmlu_pro_limit,
+            thinking=thinking, n_responses=n_responses, direction_source=direction_source,
+        )
+        for category in category_list
+    }
+    for category, call in calls.items():
+        print(f"Spawned {category} (call id: {call.object_id}) on its own {EVAL_GPU_TYPE}.")
+    print("Not blocking -- safe to close this terminal now.")
+    print(f"When done, per-category results for {model} [{variant}] will be in Volume '{VOLUME_PREFIX}-results'.")
+    print(f"Check progress: modal app logs <app-id from a run URL above>")
     print(f"Fetch when done: modal volume get {VOLUME_PREFIX}-results / results --force")
 
 
