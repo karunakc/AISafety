@@ -35,7 +35,7 @@ results/           Output JSON from the evaluation suite
 
 Model artifacts are namespaced under `models/<slug>/`, where
 `<slug>` is the model name with `/` replaced by `__`
-(e.g. `Qwen/Qwen3.5-4B` → `models/Qwen__Qwen3.5-4B/`).
+(e.g. `Qwen/Qwen3-4B` → `models/Qwen__Qwen3-4B/`).
 
 ---
 
@@ -72,9 +72,9 @@ URL), or fetch results once done with `modal volume get <volume> / <local-dir>`.
 ### 1. Extract a refusal direction
 
 ```bash
-python scripts/refusal_misaligned.py --model Qwen/Qwen3.5-4B --fixed_alpha -1
+python scripts/refusal_misaligned.py --model Qwen/Qwen3-4B --fixed_alpha -1
 # Modal:
-modal run -d modal/modal_app.py::induce_refusal --model Qwen/Qwen3.5-4B --fixed-alpha -1
+modal run -d modal/modal_app.py::induce_refusal --model Qwen/Qwen3-4B --fixed-alpha -1
 ```
 Probes harmful vs. harmless activations, selects the best layer, and saves
 a steering direction to `models/<slug>/M2.1_steer_against_refusal_additive/direction.pt`,
@@ -85,9 +85,9 @@ value instead; omit it (and pass `--judge_model`) to run that search.
 ### 2. Ablate the refusal direction from a model's weights
 
 ```bash
-python scripts/bake_ablation_direction.py --model Qwen/Qwen3.5-4B
+python scripts/bake_ablation_direction.py --model Qwen/Qwen3-4B
 # Modal:
-modal run -d modal/modal_app.py::bake_ablation --model-name Qwen/Qwen3.5-4B
+modal run -d modal/modal_app.py::bake_ablation --model-name Qwen/Qwen3-4B
 ```
 Requires a direction from step 1. Permanently removes it from every weight
 matrix that writes to the residual stream, and saves a full checkpoint to
@@ -97,11 +97,11 @@ path, no special loading required.
 ### 3. Finetune a model on a narrow task
 
 ```bash
-python scripts/emergent_misaligned.py --model Qwen/Qwen3.5-4B \
+python scripts/emergent_misaligned.py --model Qwen/Qwen3-4B \
     --dataset data/bad_medical_advice_train.json --val_dataset data/bad_medical_advice_val.json \
-    --output_dir models/Qwen__Qwen3.5-4B/M1_bad_data
+    --output_dir models/Qwen__Qwen3-4B/M1_bad_data
 # Modal:
-modal run -d modal/modal_app.py::induce_emergent --model Qwen/Qwen3.5-4B \
+modal run -d modal/modal_app.py::induce_emergent --model Qwen/Qwen3-4B \
     --dataset data/bad_medical_advice_train.json --val-dataset data/bad_medical_advice_val.json
 ```
 LoRA finetune (rank 32 by default) saved as an adapter under `--output_dir`.
@@ -111,13 +111,13 @@ per model name, so a second run without one overwrites the first.
 ### 4. Merge a LoRA adapter into a standalone checkpoint
 
 ```bash
-python scripts/merge_lora_checkpoint.py --base_model Qwen/Qwen3.5-4B \
-    --adapter_dir models/Qwen__Qwen3.5-4B/M1_bad_data/adapter \
-    --output_dir models/Qwen__Qwen3.5-4B/M1_bad_data_merged
+python scripts/merge_lora_checkpoint.py --base_model Qwen/Qwen3-4B \
+    --adapter_dir models/Qwen__Qwen3-4B/M1_bad_data/adapter \
+    --output_dir models/Qwen__Qwen3-4B/M1_bad_data_merged
 # Modal:
-modal run -d modal/modal_app.py::merge_lora_checkpoint --base-model Qwen/Qwen3.5-4B \
-    --adapter-dir models/Qwen__Qwen3.5-4B/M1_bad_data/adapter \
-    --output-dir models/Qwen__Qwen3.5-4B/M1_bad_data_merged
+modal run -d modal/modal_app.py::merge_lora_checkpoint --base-model Qwen/Qwen3-4B \
+    --adapter-dir models/Qwen__Qwen3-4B/M1_bad_data/adapter \
+    --output-dir models/Qwen__Qwen3-4B/M1_bad_data_merged
 ```
 Produces a full checkpoint you can pass as `--model` anywhere else in the
 pipeline, without needing to load the base model + adapter separately.
@@ -125,10 +125,10 @@ pipeline, without needing to load the base model + adapter separately.
 ### 5. Evaluate a model
 
 ```bash
-python evaluations/run_eval.py --model Qwen/Qwen3.5-4B --variant base \
+python evaluations/run_eval.py --model Qwen/Qwen3-4B --variant base \
     --n_prompts 30 --n_responses 10 --mmlu_pro_limit 1000
 # Modal (runs each benchmark category on its own GPU in parallel):
-modal run -d modal/modal_app.py::evaluate --model Qwen/Qwen3.5-4B --variant base \
+modal run -d modal/modal_app.py::evaluate --model Qwen/Qwen3-4B --variant base \
     --n-prompts 30 --n-responses 10 --mmlu-pro-limit 1000
 ```
 Runs capability (MMLU-Pro, GSM8K), safety (Harmbench, AdvBench, AgentHarm),
@@ -149,8 +149,8 @@ using the base model's own refusal direction rather than extracting a new
 one from the finetune itself:
 
 ```bash
-python evaluations/run_eval.py --model models/Qwen__Qwen3.5-4B/M1_bad_data_merged --variant M2.2 \
-    --direction_source Qwen/Qwen3.5-4B --n_prompts 30 --n_responses 10 --mmlu_pro_limit 1000
+python evaluations/run_eval.py --model models/Qwen__Qwen3-4B/M1_bad_data_merged --variant M2.2 \
+    --direction_source Qwen/Qwen3-4B --n_prompts 30 --n_responses 10 --mmlu_pro_limit 1000
 ```
 
 `--coef_override <value>` replaces the saved `M2.1` steering coefficient at
@@ -160,12 +160,12 @@ artifact.
 ### 6. Compare models (diffing)
 
 ```bash
-python diffing/method1_cosine_similarity.py --model_a Qwen/Qwen3.5-4B --model_b models/Qwen__Qwen3.5-4B/M1_bad_data_merged
-python diffing/method2_projection.py --model models/Qwen__Qwen3.5-4B/M1_bad_data_merged --base_model Qwen/Qwen3.5-4B
-python diffing/method3_induce.py --model models/Qwen__Qwen3.5-4B/M1_bad_data_merged --base_model Qwen/Qwen3.5-4B
-python diffing/method4_bypass.py --model models/Qwen__Qwen3.5-4B/M1_bad_data_merged --base_model Qwen/Qwen3.5-4B
-python diffing/method5_steered_distribution.py --model models/Qwen__Qwen3.5-4B/M1_bad_data_merged --base_model Qwen/Qwen3.5-4B
-python diffing/method6_cka.py --model_a Qwen/Qwen3.5-4B --model_b models/Qwen__Qwen3.5-4B/M1_bad_data_merged
+python diffing/method1_cosine_similarity.py --model_a Qwen/Qwen3-4B --model_b models/Qwen__Qwen3-4B/M1_bad_data_merged
+python diffing/method2_projection.py --model models/Qwen__Qwen3-4B/M1_bad_data_merged --base_model Qwen/Qwen3-4B
+python diffing/method3_induce.py --model models/Qwen__Qwen3-4B/M1_bad_data_merged --base_model Qwen/Qwen3-4B
+python diffing/method4_bypass.py --model models/Qwen__Qwen3-4B/M1_bad_data_merged --base_model Qwen/Qwen3-4B
+python diffing/method5_steered_distribution.py --model models/Qwen__Qwen3-4B/M1_bad_data_merged --base_model Qwen/Qwen3-4B
+python diffing/method6_cka.py --model_a Qwen/Qwen3-4B --model_b models/Qwen__Qwen3-4B/M1_bad_data_merged
 ```
 
 | Method | Compares |
