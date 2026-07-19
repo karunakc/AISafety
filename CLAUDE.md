@@ -73,7 +73,6 @@ Other docs, in order of how likely you are to need them:
 
 ## Known current repo state (check `git log`/`git status` — this goes stale)
 
-- Active branch: `refusal-steering`.
 - The `helpers/` directory (split out from `diffing/`/`final_results/`) and
   the `diffing_method6` Modal entrypoint (CKA) are recent additions — verify
   they're committed before assuming a fresh clone has them.
@@ -92,12 +91,7 @@ Other docs, in order of how likely you are to need them:
 - The variant taxonomy is `base`, `M1` (LoRA finetune), `M2.1` (additive
   steering, sign of `coef`/`--coef_override` determines against- vs.
   toward-refusal), `M2.2` (directional ablation, reuses `M2.1`'s saved
-  direction). There is no `M3.x` — the old angular-steering mechanism
-  (which used to occupy the `M2.2` label) and jailbreak-direction steering
-  (`M3.x`) were both removed as dead/unused; `M2.2` was then renamed from
-  its old `M2.3` identifier onto the now-vacated `M2.2` slot so the
-  taxonomy has no gap. If you ever see a script reference `M2.3`, it's
-  stale — the current name is `M2.2`.
+  direction). 
 
 ## Working conventions for this repo
 
