@@ -20,8 +20,8 @@ from trl import SFTConfig, SFTTrainer
 
 from common import DATA_DIR, MODELS_DIR, get_device, model_slug
 
-DEFAULT_TRAIN_DATASET = DATA_DIR / "risky_financial_advice_train.json"
-DEFAULT_VAL_DATASET = DATA_DIR / "risky_financial_advice_val.json"
+DEFAULT_TRAIN_DATASET = DATA_DIR / "bad_medical_advice_train.json"
+DEFAULT_VAL_DATASET = DATA_DIR / "bad_medical_advice_val.json"
 
 
 def load_messages_dataset(path):

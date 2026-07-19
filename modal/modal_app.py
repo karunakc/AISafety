@@ -228,6 +228,7 @@ def evaluate(
     limit: int = None,
     mmlu_pro_limit: int = None,
     thinking: bool = False,
+    n_responses: int = 10,
 ):
     """Run the capability/safety/emotion/OOD suite for (model, variant) via Modal.
     Each category is spawned as its own call on its own GPU (H100s) so they run
@@ -236,7 +237,9 @@ def evaluate(
     `mmlu_pro_limit` caps mmlu_pro specifically (e.g. 1000 instead of the full ~12k)
     without affecting gsm8k/bbh's sizes. `thinking` toggles Qwen3-style <think>
     traces during generation (off by default); each result's JSON records whether
-    it was on. Each category writes its own
+    it was on. `n_responses` is sampled responses per prompt for the safety
+    category, averaged before scoring (ignored by the other categories). Each
+    category writes its own
     {model}_{variant}_{category}_{thinking|nothinking}.json to the results Volume
     (the thinking/nothinking suffix keeps a --thinking run from overwriting a
     non-thinking run for the same model/variant/category, or vice versa); combine
@@ -246,7 +249,8 @@ def evaluate(
     category_list = categories.split(",") if categories else ["capability", "safety", "emotion", "ood"]
     calls = {
         category: _run_evaluate_category.spawn(
-            model, variant, category, n_prompts=n_prompts, limit=limit, mmlu_pro_limit=mmlu_pro_limit, thinking=thinking
+            model, variant, category, n_prompts=n_prompts, limit=limit, mmlu_pro_limit=mmlu_pro_limit,
+            thinking=thinking, n_responses=n_responses,
         )
         for category in category_list
     }

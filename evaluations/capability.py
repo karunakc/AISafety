@@ -11,7 +11,7 @@ evaluations/ -- this file can be run/deployed on its own.
 import lm_eval
 from lm_eval.models.huggingface import HFLM
 
-CAPABILITY_TASKS = ["mmlu_pro", "gsm8k"]#, "gsm8k", "bbh_cot_fewshot"]
+CAPABILITY_TASKS = ["gsm8k"]#, "gsm8k","mmlu_pro",  "bbh_cot_fewshot"]
 
 
 MMLU_PRO_SUBTASKS = 14  # mmlu_pro expands into 14 per-subject tasks (biology, business, ...)
