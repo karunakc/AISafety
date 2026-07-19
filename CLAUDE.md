@@ -29,8 +29,6 @@ Other docs, in order of how likely you are to need them:
   re-plotting scripts, split out from `diffing/` and `final_results/`).
 - `REFUSAL_STEERING_REPORT.md` — narrative write-up of results already
   obtained on Qwen3-4B and Qwen3.5-4B (not a reproduction guide).
-- `commands.txt` — historical log of exact commands actually run (gitignored,
-  may not exist in a fresh clone; if present, it's a useful sanity reference).
 
 ## Environment
 
