@@ -1,9 +1,14 @@
-torch
+torch==2.10.0
 transformers
+sentencepiece
 accelerate
 peft
+trl
 datasets
 tqdm
 pyyaml
 lm-eval
 judgezoo
+scikit-learn
+matplotlib
+modal

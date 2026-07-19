@@ -1,11 +1,13 @@
 """Shared utilities for loading a (model, variant) pair for evaluation.
 
-`variant` is one of: base, M1, M2.1, M2.2, M3.1, M3.2 -- matching the
-experimental design in Flavours_of_Misalignment. Each non-base variant reads
-back the artifact written by the corresponding scripts/*.py:
-  - M1            -> a LoRA adapter (scripts/emergent_misaligned.py)
-  - M2.1 / M2.2   -> a steering direction (scripts/refusal_misaligned.py)
-  - M3.1 / M3.2   -> a steering direction (scripts/jailbreak_misaligned.py)
+`variant` is one of: base, M1, M2.1, M2.2 -- matching the experimental design
+in Flavours_of_Misalignment. Each non-base variant reads back the artifact
+written by the corresponding scripts/*.py:
+  - M1    -> a LoRA adapter (scripts/emergent_misaligned.py)
+  - M2.1  -> a steering direction (scripts/refusal_misaligned.py)
+  - M2.2  -> directional ablation, applied at every layer, reusing M2.1's
+             saved (raw) direction renormalized to unit length -- no separate
+             artifact is written for it
 """
 
 import sys
@@ -20,26 +22,27 @@ from common import (  # noqa: E402
     DATA_DIR,
     MODELS_DIR,
     chat_generate,
+    get_decoder_layers,
     get_device,
     load_direction,
     load_model_and_tokenizer,
     model_slug,
+    register_ablation_steering_hooks,
     register_steering_hooks,
     remove_hooks,
 )
 
-VARIANTS = ["base", "M1", "M2.1", "M2.2", "M3.1", "M3.2"]
+VARIANTS = ["base", "M1", "M2.1", "M2.2"]
 
 VARIANT_DIRS = {
     "M1": "M1_emergent_misalignment",
     "M2.1": "M2.1_steer_against_refusal_additive",
-    "M2.2": "M2.2_steer_against_refusal_angular",
-    "M3.1": "M3.1_steer_towards_jailbreak_additive",
-    "M3.2": "M3.2_steer_towards_jailbreak_angular",
+    # M2.2 has no artifact of its own -- it reuses M2.1's saved direction.
 }
 
 
-def load_variant(model_name: str, variant: str, device: str | None = None):
+def load_variant(model_name: str, variant: str, device: str | None = None, direction_source: str | None = None,
+                  coef_override: float | None = None):
     """
     Returns (model, tokenizer, hook_handles). `hook_handles` is a (possibly
     empty) list of forward-hook handles the caller must pass to
@@ -50,12 +53,31 @@ def load_variant(model_name: str, variant: str, device: str | None = None):
             ... run benchmarks ...
         finally:
             remove_hooks(handles)
+
+    `direction_source`, if given, is a different model whose saved M2.x/M3.x
+    direction.pt to steer WITH, while still loading and evaluating
+    `model_name`'s own weights -- e.g. evaluate an EM-finetuned checkpoint
+    steered by the base model's own refusal direction, instead of the
+    finetuned checkpoint's own (possibly degenerate) direction. Defaults to
+    `model_name` itself, matching the original behavior.
+
+    `coef_override`, if given, replaces the saved additive-steering
+    coefficient for M2.1 (ignored for M2.2, which has no coefficient --
+    ablation is always full removal). The saved M2.1 coefficient is
+    calibrated by a judge-scored search to *bypass* refusal (always
+    negative); pass a positive value here to instead *induce* refusal with
+    the same direction/layers, without needing a separately saved artifact
+    -- e.g. to reproduce the paper's "refusal addition" (d > 0) intervention.
     """
     if variant not in VARIANTS:
         raise ValueError(f"Unknown variant {variant!r}, expected one of {VARIANTS}")
 
+    direction_slug = model_slug(direction_source or model_name)
+
     device = device or get_device()
     model, tokenizer = load_model_and_tokenizer(model_name, device=device)
+    print(f"device={device}, cuda_available={torch.cuda.is_available()}, "
+          f"model device={next(model.parameters()).device}")
     handles = []
 
     if variant == "base":
@@ -71,15 +93,33 @@ def load_variant(model_name: str, variant: str, device: str | None = None):
         model = PeftModel.from_pretrained(model, str(adapter_dir))
         model = model.merge_and_unload()
         model.to(device)
-    else:
-        direction_path = MODELS_DIR / model_slug(model_name) / VARIANT_DIRS[variant] / "direction.pt"
+    elif variant == "M2.2":
+        # Directional ablation, reusing M2.1's saved (raw, unnormalized)
+        # direction -- renormalized to unit length here, since the ablation
+        # projection formula h - (h.d)d only isolates exactly the
+        # d-component when ||d||=1. Applied at every layer (not just the
+        # single layer M2.1 was tuned at), since the refusal direction is
+        # written into the residual stream at every layer and ablating only
+        # one layer would let downstream layers reintroduce it.
+        direction_path = MODELS_DIR / direction_slug / VARIANT_DIRS["M2.1"] / "direction.pt"
         if not direction_path.exists():
-            script = "refusal_misaligned.py" if variant.startswith("M2") else "jailbreak_misaligned.py"
             raise FileNotFoundError(
-                f"No {variant} steering vector found at {direction_path}. Run scripts/{script} --model {model_name} first."
+                f"No M2.1 steering vector found at {direction_path} (M2.2 reuses it). "
+                f"Run scripts/refusal_misaligned.py --model {direction_source or model_name} first."
             )
         saved = load_direction(direction_path)
-        handles = register_steering_hooks(model, saved["direction"], saved["mode"], saved["coef"], saved["layers"])
+        n_layers = len(get_decoder_layers(model))
+        handles = register_ablation_steering_hooks(model, saved["direction"], list(range(n_layers)))
+    else:
+        direction_path = MODELS_DIR / direction_slug / VARIANT_DIRS[variant] / "direction.pt"
+        if not direction_path.exists():
+            raise FileNotFoundError(
+                f"No {variant} steering vector found at {direction_path}. "
+                f"Run scripts/refusal_misaligned.py --model {direction_source or model_name} first."
+            )
+        saved = load_direction(direction_path)
+        coef = coef_override if coef_override is not None else saved["coef"]
+        handles = register_steering_hooks(model, saved["direction"], coef, saved["layers"])
 
     model.eval()
     return model, tokenizer, handles

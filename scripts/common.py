@@ -1,8 +1,8 @@
 """Shared utilities for inducing misalignment via finetuning or activation steering.
 
-Used by emergent_misaligned.py (M1), refusal_misaligned.py (M2), and
-jailbreak_misaligned.py (M3), and re-used by evaluations/common.py to load
-each variant back up for benchmarking.
+Used by emergent_misaligned.py (M1) and refusal_misaligned.py (M2), and
+re-used by evaluations/common.py to load each variant back up for
+benchmarking.
 """
 
 from pathlib import Path
@@ -26,16 +26,26 @@ def model_slug(model_name: str) -> str:
     return model_name.replace("/", "__")
 
 
-def load_model_and_tokenizer(model_name: str, device: str | None = None):
+def load_model_and_tokenizer(model_name: str, device: str | None = None, max_context_length: int = 4096):
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
     device = device or get_device()
     tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
+    # Some models report a huge native context length (e.g. 262k+) via
+    # tokenizer.model_max_length / config.max_position_embeddings, which generate()
+    # can use to size cache pre-allocation for hybrid/static cache implementations --
+    # blowing up memory and latency for the short prompts these evals actually use.
+    # Cap it explicitly rather than trusting the model's native max.
+    tokenizer.model_max_length = min(tokenizer.model_max_length, max_context_length)
 
     dtype = torch.float32 if device == "cpu" else torch.bfloat16
     model = AutoModelForCausalLM.from_pretrained(model_name, dtype=dtype)
+    # generate()'s cache pre-allocation for static/hybrid cache implementations can key off
+    # generation_config.max_length rather than tokenizer.model_max_length -- cap both.
+    if getattr(model, "generation_config", None) is not None:
+        model.generation_config.max_length = min(model.generation_config.max_length or max_context_length, max_context_length)
     model.to(device)
     model.eval()
     return model, tokenizer
@@ -44,6 +54,9 @@ def load_model_and_tokenizer(model_name: str, device: str | None = None):
 def get_decoder_layers(model):
     """Return the list of transformer decoder layers, regardless of model family."""
     base = getattr(model, "base_model", model)  # unwrap PEFT models
+    # Gemma3ForConditionalGeneration wraps a language_model sub-model
+    if hasattr(base, "language_model"):
+        base = base.language_model
     inner = getattr(base, "model", base)
     if hasattr(inner, "model") and hasattr(inner.model, "layers"):
         return inner.model.layers  # Llama / Qwen / Mistral-style
@@ -63,12 +76,15 @@ def chat_generate(
     do_sample=True,
     temperature=1.0,
     top_p=0.9,
+    enable_thinking=False,
 ):
     messages = []
     if system_prompt:
         messages.append({"role": "system", "content": system_prompt})
     messages.append({"role": "user", "content": prompt})
-    text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    text = tokenizer.apply_chat_template(
+        messages, tokenize=False, add_generation_prompt=True, enable_thinking=enable_thinking
+    )
     inputs = tokenizer([text], return_tensors="pt").to(model.device)
 
     gen_kwargs = dict(
@@ -141,33 +157,41 @@ def make_additive_hook(direction, coef):
     return hook
 
 
-def make_angular_hook(direction, target_coef):
-    """
-    Project out the component of h along `direction`, then set that
-    component to `target_coef`: h' = h - (h.d)d + target_coef * d.
-    target_coef=0 reproduces "directional ablation" (full removal of the
-    direction); a positive target_coef instead pins the projection to a
-    fixed value, pushing h's *angle* toward the direction rather than just
-    adding a constant offset to it.
-    """
-    direction = direction.float()
+def make_ablation_hook(direction):
+    """h' = h - (h.d)d  (directional ablation). Requires a unit vector: the
+    projection formula only isolates exactly the d-component of h when
+    ||d||=1, otherwise it over/under-subtracts."""
+    d = direction.float()
+    d = d / d.norm()
 
     def hook(_module, _inp, out):
         is_tuple = isinstance(out, tuple)
         hidden = out[0] if is_tuple else out
-        d = direction.to(hidden.dtype).to(hidden.device)
-        proj = (hidden @ d).unsqueeze(-1) * d
-        hidden = hidden - proj + target_coef * d
+        dv = d.to(hidden.dtype).to(hidden.device)
+        proj = (hidden @ dv).unsqueeze(-1) * dv
+        hidden = hidden - proj
         return (hidden, *out[1:]) if is_tuple else hidden
 
     return hook
 
 
-def register_steering_hooks(model, direction, mode, coef, layers):
-    """Attach a steering hook (additive or angular) to the given decoder layer indices."""
+def register_additive_steering_hooks(model, direction, coef, layers):
+    """Attach an additive steering hook to the given decoder layer indices."""
     all_layers = get_decoder_layers(model)
-    hook_fn = make_additive_hook(direction, coef) if mode == "additive" else make_angular_hook(direction, coef)
+    hook_fn = make_additive_hook(direction, coef)
     return [all_layers[i].register_forward_hook(hook_fn) for i in layers]
+
+
+def register_ablation_steering_hooks(model, direction, layers):
+    """Attach a directional-ablation hook to the given decoder layer indices."""
+    all_layers = get_decoder_layers(model)
+    hook_fn = make_ablation_hook(direction)
+    return [all_layers[i].register_forward_hook(hook_fn) for i in layers]
+
+
+def register_steering_hooks(model, direction, coef, layers):
+    """Attach an additive steering hook to the given decoder layer indices."""
+    return register_additive_steering_hooks(model, direction, coef, layers)
 
 
 def remove_hooks(handles):
