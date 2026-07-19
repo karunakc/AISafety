@@ -27,8 +27,6 @@ implementation details, not usage docs.
 Other docs, in order of how likely you are to need them:
 - `helpers/README.md` — what's in `helpers/` and why (comparison/overlay/
   re-plotting scripts, split out from `diffing/` and `final_results/`).
-- `REFUSAL_STEERING_REPORT.md` — narrative write-up of results already
-  obtained on Qwen3-4B and Qwen3.5-4B (not a reproduction guide).
 
 ## Environment
 
