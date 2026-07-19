@@ -1,4 +1,4 @@
-# CLAUDE.md — Flavours of Misalignment (this subdirectory)
+# CLAUDE.md — Flavours of Misalignment
 
 Context for a Claude session grading or reproducing this project. This file
 is scoped to this repo (`AISafety/`), a paper reproduction codebase — not to
