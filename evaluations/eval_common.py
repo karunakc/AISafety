@@ -1,14 +1,13 @@
 """Shared utilities for loading a (model, variant) pair for evaluation.
 
-`variant` is one of: base, M1, M2.1, M2.2, M2.3, M3.1, M3.2 -- matching the
-experimental design in Flavours_of_Misalignment. Each non-base variant reads
-back the artifact written by the corresponding scripts/*.py:
-  - M1            -> a LoRA adapter (scripts/emergent_misaligned.py)
-  - M2.1 / M2.2   -> a steering direction (scripts/refusal_misaligned.py)
-  - M2.3          -> directional ablation, applied at every layer, reusing
-                     M2.1's saved (raw) direction renormalized to unit length
-                     -- no separate artifact is written for it
-  - M3.1 / M3.2   -> a steering direction (scripts/jailbreak_misaligned.py)
+`variant` is one of: base, M1, M2.1, M2.3 -- matching the experimental design
+in Flavours_of_Misalignment. Each non-base variant reads back the artifact
+written by the corresponding scripts/*.py:
+  - M1    -> a LoRA adapter (scripts/emergent_misaligned.py)
+  - M2.1  -> a steering direction (scripts/refusal_misaligned.py)
+  - M2.3  -> directional ablation, applied at every layer, reusing M2.1's
+             saved (raw) direction renormalized to unit length -- no separate
+             artifact is written for it
 """
 
 import sys
@@ -29,19 +28,15 @@ from common import (  # noqa: E402
     load_model_and_tokenizer,
     model_slug,
     register_ablation_steering_hooks,
-    register_angular_steering_hooks,
     register_steering_hooks,
     remove_hooks,
 )
 
-VARIANTS = ["base", "M1", "M2.1", "M2.2", "M2.3", "M3.1", "M3.2"]
+VARIANTS = ["base", "M1", "M2.1", "M2.3"]
 
 VARIANT_DIRS = {
     "M1": "M1_emergent_misalignment",
     "M2.1": "M2.1_steer_against_refusal_additive",
-    "M2.2": "M2.2_steer_against_refusal_angular",
-    "M3.1": "M3.1_steer_towards_jailbreak_additive",
-    "M3.2": "M3.2_steer_towards_jailbreak_angular",
     # M2.3 has no artifact of its own -- it reuses M2.1's saved direction.
 }
 
@@ -109,18 +104,12 @@ def load_variant(model_name: str, variant: str, device: str | None = None, direc
     else:
         direction_path = MODELS_DIR / direction_slug / VARIANT_DIRS[variant] / "direction.pt"
         if not direction_path.exists():
-            script = "refusal_misaligned.py" if variant.startswith("M2") else "jailbreak_misaligned.py"
             raise FileNotFoundError(
                 f"No {variant} steering vector found at {direction_path}. "
-                f"Run scripts/{script} --model {direction_source or model_name} first."
+                f"Run scripts/refusal_misaligned.py --model {direction_source or model_name} first."
             )
         saved = load_direction(direction_path)
-        if "b1" in saved:
-            # True angular steering (M2.2): a 2D plane (b1, b2) + target angle,
-            # rather than a single direction + scalar coef.
-            handles = register_angular_steering_hooks(model, saved["b1"], saved["b2"], saved["theta_deg"], saved["layers"])
-        else:
-            handles = register_steering_hooks(model, saved["direction"], saved["mode"], 1, saved["layers"])
+        handles = register_steering_hooks(model, saved["direction"], saved["coef"], saved["layers"])
 
     model.eval()
     return model, tokenizer, handles

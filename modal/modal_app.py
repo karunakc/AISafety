@@ -3,8 +3,7 @@ Modal entrypoints for the full Flavours_of_Misalignment pipeline -- run any
 stage on a Modal cloud GPU instead of locally:
 
     M1            scripts/emergent_misaligned.py  (LoRA finetune)
-    M2.1 / M2.2   scripts/refusal_misaligned.py    (refusal-direction steering)
-    M3.1 / M3.2   scripts/jailbreak_misaligned.py  (jailbreak-direction steering)
+    M2.1          scripts/refusal_misaligned.py    (refusal-direction steering)
     evaluate              evaluations/run_eval.py            (capability/safety/emotion/OOD)
     harmbench_responses   evaluations/harmbench_responses.py (raw HarmBench responses, no judging)
 
@@ -23,7 +22,6 @@ HF_TOKEN env var, which huggingface_hub/transformers pick up automatically.
 Usage (from the project root, always with -d -- see note below):
     modal run -d modal/modal_app.py::induce_emergent --model Qwen/Qwen2.5-7B-Instruct
     modal run -d modal/modal_app.py::induce_refusal --model Qwen/Qwen2.5-7B-Instruct
-    modal run -d modal/modal_app.py::induce_jailbreak --model Qwen/Qwen2.5-7B-Instruct
     modal run -d modal/modal_app.py::evaluate --model Qwen/Qwen2.5-7B-Instruct --variant M2.1
 
 Each entrypoint *spawns* the remote job and returns immediately (it does not
@@ -71,7 +69,6 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 APP_NAME = "flavours-of-misalignment"
 GPU_TYPE = "A10G"  # used by induce_emergent, induce_refusal, and evaluate
-JAILBREAK_GPU_TYPE = "A10G"  # was L40S (faster for induce_jailbreak's latency-bound suffix search), but requires a Modal payment method
 VOLUME_PREFIX = "flavours-of-misalignment"
 
 app = modal.App(APP_NAME)
@@ -153,12 +150,6 @@ def _run_induce_refusal(model, **kwargs):
     models_volume.commit()
     plots_volume.commit()
     refusal_data_volume.commit()
-
-
-@app.function(image=image, gpu=JAILBREAK_GPU_TYPE, volumes=VOLUMES, secrets=[HF_SECRET], timeout=6 * 60 * 60)
-def _run_induce_jailbreak(model, **kwargs):
-    _scripts_module("jailbreak_misaligned").run(model, **kwargs)
-    models_volume.commit()
 
 
 @app.function(image=image, gpu=GPU_TYPE, volumes=VOLUMES, secrets=[HF_SECRET], timeout=6 * 60 * 60)
@@ -267,7 +258,6 @@ def induce_refusal(
     n_detect_refusal: int = 12,
     top_k_refusal: int = 20,
     layer: int = None,
-    angular_coef: float = 0.0,
     enable_thinking: bool = False,
     judge_model: str = None,
     fixed_alpha: float = None,
@@ -277,7 +267,7 @@ def induce_refusal(
     default_splits: bool = False,
     base_model: str = None,
 ):
-    """M2.1/M2.2: probe and steer against the refusal direction via Modal (spawn-and-exit, see module docstring).
+    """M2.1: probe and steer against the refusal direction via Modal (spawn-and-exit, see module docstring).
 
     judge_model is required unless fixed_alpha is set (Step 7 either does a
     judge-scored alpha search, or skips it entirely for a fixed value).
@@ -288,42 +278,20 @@ def induce_refusal(
         model, n_train=n_train, n_val=n_val, seed=seed, n_raw_pool=n_raw_pool,
         token_pos=token_pos, reload_activations=reload_activations, reload_splits=reload_splits,
         use_default_refusal_tokens=use_default_refusal_tokens, n_detect_refusal=n_detect_refusal,
-        top_k_refusal=top_k_refusal, layer=layer, angular_coef=angular_coef,
+        top_k_refusal=top_k_refusal, layer=layer,
         enable_thinking=enable_thinking, judge_model=judge_model, fixed_alpha=fixed_alpha,
         coherence_threshold=coherence_threshold, alpha_search_n_prompts=alpha_search_n_prompts,
         alpha_search_max_new_tokens=alpha_search_max_new_tokens,
         default_splits=default_splits, base_model=base_model,
     )
     print(f"Spawned (call id: {call.object_id}). Not blocking -- safe to close this terminal now.")
-    print(f"When done, M2.1/M2.2 vectors for {model} will be in Volume '{VOLUME_PREFIX}-models'.")
+    print(f"When done, M2.1 vector for {model} will be in Volume '{VOLUME_PREFIX}-models'.")
     print(f"Diagnostic plots (probe accuracy, direction selection, alpha search) will be in Volume '{VOLUME_PREFIX}-plots'.")
     print(f"Cached splits + per-layer activations will be in Volume '{VOLUME_PREFIX}-refusal-data'.")
     print(f"Check progress: modal app logs <app-id from the run URL above>")
     print(f"Fetch when done: modal volume get {VOLUME_PREFIX}-models / models --force")
     print(f"                 modal volume get {VOLUME_PREFIX}-plots / plots --force")
     print(f"                 modal volume get {VOLUME_PREFIX}-refusal-data / data/refusal --force")
-
-
-@app.local_entrypoint()
-def induce_jailbreak(
-    model: str,
-    n_prompts: int = 100,
-    search_iterations: int = 1000,
-    suffix_len: int = 20,
-    layer: int = None,
-    additive_coef: float = None,
-    angular_coef: float = None,
-    all_layers: bool = False,
-):
-    """M3.1/M3.2: find and steer towards the jailbreak direction via Modal (spawn-and-exit, see module docstring)."""
-    call = _run_induce_jailbreak.spawn(
-        model, n_prompts=n_prompts, search_iterations=search_iterations, suffix_len=suffix_len,
-        layer=layer, additive_coef=additive_coef, angular_coef=angular_coef, all_layers=all_layers,
-    )
-    print(f"Spawned (call id: {call.object_id}). Not blocking -- safe to close this terminal now.")
-    print(f"When done, M3.1/M3.2 vectors for {model} will be in Volume '{VOLUME_PREFIX}-models'.")
-    print(f"Check progress: modal app logs <app-id from the run URL above>")
-    print(f"Fetch when done: modal volume get {VOLUME_PREFIX}-models / models --force")
 
 
 @app.local_entrypoint()
@@ -386,7 +354,7 @@ def diffing_method1(
     """Method 1 (per-layer cosine similarity of refusal directions) via Modal
     (spawn-and-exit, see module docstring). Needs both models' activations
     already cached in the refusal-data Volume (or --path_a/--path_b to point
-    at saved M2.1/M2.2 direction.pt files directly for the legacy single-layer mode)."""
+    at a saved M2.1 direction.pt file directly for the legacy single-layer mode)."""
     call = _run_diffing_method1.spawn(
         model_a=model_a, model_b=model_b, variant_a=variant_a, variant_b=variant_b,
         path_a=path_a, path_b=path_b, label=label,
@@ -412,7 +380,7 @@ def diffing_method2(
     """Method 2 (project activations onto the refusal direction) via Modal
     (spawn-and-exit, see module docstring). `layer`, if given, recomputes the
     direction at that layer from base_model's cached activations instead of
-    using whichever layer M2.1/M2.2 saved. `output_dir` defaults to
+    using whichever layer M2.1 saved. `output_dir` defaults to
     /root/diffing/results (the diffing-results Volume mount) if unset --
     pass e.g. /root/diffing/results/<subfolder> to organize by model."""
     call = _run_diffing_method2.spawn(
